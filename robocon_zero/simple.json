@@ -1,0 +1,737 @@
+[
+  {
+    "ts": 361813.749343,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361813.9609875,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361814.1744987,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361814.3879142,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361814.6008372,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361814.8142509,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361815.0261249,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361815.2404909,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361815.4546891,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361815.6666159,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361815.8812037,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361816.0956159,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361816.3081419,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361816.5211855,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361816.734317,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361816.9476328,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361817.1609312,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361817.3752435,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361817.5888919,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361817.8010333,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361818.0166833,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361818.2182476,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361818.4328766,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361818.646878,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361818.8612114,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361819.0717089,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361819.2842835,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361819.4963814,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361819.696718,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361819.8972108,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361820.1099314,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361820.3226001,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361820.5368678,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361820.7517218,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361820.9650394,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361821.1776307,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361821.3895302,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361821.6030639,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361821.8032177,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361822.0154134,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361822.2278167,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361822.4420295,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361822.6563225,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361822.8690397,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361823.0825719,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361823.2943456,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361823.5074537,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361823.7207106,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  },
+  {
+    "ts": 361823.9350821,
+    "state": {
+      "time_left_ms": 0,
+      "r1_pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0
+      },
+      "r1_kfs": 0
+    },
+    "command": {
+      "name": "AssembleWeapon"
+    }
+  }
+]

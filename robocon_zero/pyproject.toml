@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robocon_zero"
+version = "0.1.0"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]          # 根目录加入 PYTHONPATH
+testpaths = ["tests"]
