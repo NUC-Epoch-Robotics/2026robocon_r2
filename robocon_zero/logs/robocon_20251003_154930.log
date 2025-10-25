@@ -1,2 +1,0 @@
-2025-10-03 15:49:30,185 - robocon - INFO - Game state - Phase: MC, Time: 180000ms, Violations: 0
-2025-10-03 15:49:30,186 - robocon - WARNING - Violation: R1_CANNOT_GRAB_SPEARHEAD_IN_MC - Action: grab_spearhead, Robot: r1
