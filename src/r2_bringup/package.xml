@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>r2_bringup</name>
+  <version>0.0.1</version>
+  <description>Launch files for R2 system</description>
+
+  <maintainer email="you@example.com">r2</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>r2_decision</exec_depend>
+  <exec_depend>r2_fake_lower_body</exec_depend>
+  <exec_depend>r2_fake_upper_body</exec_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  
+  <export>
+  <build_type>ament_cmake</build_type>
+  </export>
+</package>
