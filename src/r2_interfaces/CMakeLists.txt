@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GoalReached.msg"
   "msg/ArmCommand.msg"
   "msg/ArmDone.msg"
+  "msg/ArmAck.msg"
 )
 
 ament_package()

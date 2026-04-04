@@ -1,0 +1,5 @@
+{
+    "cmake.sourceDirectory": "E:/robocon2026/src/r2_bringup",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.defaultPackageManager": "ms-python.python:pip"
+}

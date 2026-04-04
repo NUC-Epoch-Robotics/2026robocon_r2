@@ -12,6 +12,9 @@ with open('rules.pdf', 'rb') as pdf_file:
     for page_num in range(len(pdf_reader.pages)):
         page = pdf_reader.pages[page_num]
         text += page.extract_text() + '\n'
-    
-    # 打印提取的文本（前50000字符）
-    print(text[:50000])
+
+# --- 新增：将提取的文本保存到txt文件 ---
+with open('output.txt', 'w', encoding='utf-8') as txt_file:
+    txt_file.write(text)
+
+print("文本已成功提取并保存到 output.txt")

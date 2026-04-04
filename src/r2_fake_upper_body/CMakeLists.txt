@@ -10,7 +10,7 @@ find_package(rclcpp REQUIRED)
 find_package(r2_interfaces REQUIRED)
 
 add_executable(fake_upper_body_node
-  src/fake_upper_body_node.cpp
+  src/fake_upper_body.node.cpp
 )
 
 ament_target_dependencies(fake_upper_body_node
