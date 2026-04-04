@@ -8,7 +8,7 @@ import os
 
 def generate_launch_description():
     bringup_share = get_package_share_directory('r2_bringup')
-    default_map_yaml = os.path.join(bringup_share, 'maps', 'wulin_1212', 'map.yaml')
+    default_map_yaml = os.path.join(bringup_share, 'maps', 'wulin', 'map.yaml')
 
     map_yaml = LaunchConfiguration('map')
 
