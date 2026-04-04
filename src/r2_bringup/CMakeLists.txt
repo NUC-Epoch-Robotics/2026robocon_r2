@@ -5,7 +5,7 @@ find_package(ament_cmake REQUIRED)
 
 # 安装 launch 文件
 install(
-  DIRECTORY launch
+  DIRECTORY launch maps
   DESTINATION share/${PROJECT_NAME}
 )
 
