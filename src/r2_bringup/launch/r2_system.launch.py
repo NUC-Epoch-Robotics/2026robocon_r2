@@ -1,45 +1,23 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from ament_index_python.packages import get_package_share_directory
-import os
-
 def generate_launch_description():
-    bringup_share = get_package_share_directory('r2_bringup')
-    default_map_yaml = os.path.join(bringup_share, 'maps', 'wulin', 'map.yaml')
-
-    map_yaml = LaunchConfiguration('map')
+    enable_lightboard = LaunchConfiguration('enable_lightboard')
+    lightboard_camera_index = LaunchConfiguration('lightboard_camera_index')
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'map',
-            default_value=default_map_yaml,
-            description='Full path to map yaml file'
+            'enable_lightboard',
+            default_value='true',
+            description='Enable 3x4 lightboard detector node'
         ),
-
-        # 静态地图服务器（发布 /map）
-        Node(
-            package='nav2_map_server',
-            executable='map_server',
-            name='map_server',
-            output='screen',
-            parameters=[{
-                'yaml_filename': map_yaml
-            }]
-        ),
-
-        # 让 map_server 自动进入 active（否则 lifecycle node 不会真正工作）
-        Node(
-            package='nav2_lifecycle_manager',
-            executable='lifecycle_manager',
-            name='lifecycle_manager_map',
-            output='screen',
-            parameters=[{
-                'autostart': True,
-                'node_names': ['map_server']
-            }]
+        DeclareLaunchArgument(
+            'lightboard_camera_index',
+            default_value='0',
+            description='Camera index for lightboard detector'
         ),
 
         # 你原来的系统
@@ -57,5 +35,20 @@ def generate_launch_description():
             package='r2_fake_upper_body',
             executable='fake_upper_body_node',
             output='screen'
+        ),
+        Node(
+            package='r2_lightboard_vision',
+            executable='lightboard_detector',
+            name='lightboard_detector',
+            output='screen',
+            condition=IfCondition(enable_lightboard),
+            parameters=[{
+                'rows': 3,
+                'cols': 4,
+                'camera_index': lightboard_camera_index,
+                'fps': 15.0,
+                'frame_width': 640,
+                'frame_height': 480,
+            }]
         ),
     ])
