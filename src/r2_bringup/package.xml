@@ -12,6 +12,7 @@
   <exec_depend>r2_decision</exec_depend>
   <exec_depend>r2_fake_lower_body</exec_depend>
   <exec_depend>r2_fake_upper_body</exec_depend>
+  <exec_depend>r2_lightboard_vision</exec_depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

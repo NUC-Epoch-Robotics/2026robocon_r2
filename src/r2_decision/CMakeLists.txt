@@ -7,6 +7,8 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(nav2_msgs REQUIRED)
 find_package(r2_interfaces REQUIRED)
 
 add_executable(r2_decision_node
@@ -15,6 +17,8 @@ add_executable(r2_decision_node
 
 ament_target_dependencies(r2_decision_node
   rclcpp
+  rclcpp_action
+  nav2_msgs
   r2_interfaces
 )
 
