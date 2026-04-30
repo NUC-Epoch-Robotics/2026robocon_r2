@@ -7,6 +7,8 @@ from launch_ros.actions import Node
 def generate_launch_description():
     enable_lightboard = LaunchConfiguration('enable_lightboard')
     lightboard_camera_index = LaunchConfiguration('lightboard_camera_index')
+    enable_spearhead = LaunchConfiguration('enable_spearhead')
+    spearhead_camera_index = LaunchConfiguration('spearhead_camera_index')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -18,6 +20,16 @@ def generate_launch_description():
             'lightboard_camera_index',
             default_value='0',
             description='Camera index for lightboard detector'
+        ),
+        DeclareLaunchArgument(
+            'enable_spearhead',
+            default_value='true',
+            description='Enable spearhead detector node'
+        ),
+        DeclareLaunchArgument(
+            'spearhead_camera_index',
+            default_value='1',
+            description='Camera index for spearhead detector'
         ),
 
         # 你原来的系统
@@ -49,6 +61,20 @@ def generate_launch_description():
                 'fps': 15.0,
                 'frame_width': 640,
                 'frame_height': 480,
+            }]
+        ),
+        Node(
+            package='r2_lightboard_vision',
+            executable='spearhead_detector',
+            name='spearhead_detector',
+            output='screen',
+            condition=IfCondition(enable_spearhead),
+            parameters=[{
+                'camera_index': spearhead_camera_index,
+                'fps': 20.0,
+                'frame_width': 640,
+                'frame_height': 480,
+                'start_enabled': False,
             }]
         ),
     ])

@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "lightboard_detector = r2_lightboard_vision.lightboard_detector_node:main",
+            "spearhead_detector = r2_lightboard_vision.spearhead_detector_node:main",
         ],
     },
 )

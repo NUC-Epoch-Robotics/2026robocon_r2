@@ -16,6 +16,12 @@ class LightboardDetectorNode(Node):
     - 1: R1
     - 2: R2
     - 3: FAKE
+
+    RGBW board assumption (default):
+    - R1 -> Red
+    - R2 -> Green
+    - FAKE -> Blue
+    - EMPTY -> White / Off
     """
 
     EMPTY = 0
@@ -39,6 +45,7 @@ class LightboardDetectorNode(Node):
         self.declare_parameter("sample_ratio", 0.55)
         self.declare_parameter("min_v_lit", 120)
         self.declare_parameter("min_s_color", 45)
+        self.declare_parameter("max_s_white", 35)
         self.declare_parameter("min_color_ratio", 0.22)
         self.declare_parameter("history_size", 5)
         self.declare_parameter("stable_frames_required", 3)
@@ -57,6 +64,7 @@ class LightboardDetectorNode(Node):
         self.sample_ratio = float(self.get_parameter("sample_ratio").value)
         self.min_v_lit = int(self.get_parameter("min_v_lit").value)
         self.min_s_color = int(self.get_parameter("min_s_color").value)
+        self.max_s_white = int(self.get_parameter("max_s_white").value)
         self.min_color_ratio = float(self.get_parameter("min_color_ratio").value)
         self.history_size = int(self.get_parameter("history_size").value)
         self.stable_frames_required = int(self.get_parameter("stable_frames_required").value)
@@ -187,16 +195,22 @@ class LightboardDetectorNode(Node):
         if lit_count == 0:
             return self.EMPTY
 
+        # RGBW board: white LEDs are bright and low-saturation.
+        white_mask = lit & (s <= self.max_s_white)
+        white_count = int(np.count_nonzero(white_mask))
+        if white_count / float(lit_count) >= self.min_color_ratio:
+            return self.EMPTY
+
         valid_color = lit & (s >= self.min_s_color)
         valid_count = int(np.count_nonzero(valid_color))
         if valid_count == 0:
-            # Bright but low-saturation is treated as EMPTY (e.g., white/off board)
+            # Bright but low-saturation is treated as EMPTY.
             return self.EMPTY
 
         # Hue-based class masks (OpenCV hue: 0..179)
         r1_mask = valid_color & ((h <= 15) | (h >= 160))
         r2_mask = valid_color & (h >= 35) & (h <= 95)
-        fake_mask = valid_color & (h >= 18) & (h <= 34)
+        fake_mask = valid_color & (h >= 96) & (h <= 140)
 
         r1_count = int(np.count_nonzero(r1_mask))
         r2_count = int(np.count_nonzero(r2_mask))
