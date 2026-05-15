@@ -138,7 +138,7 @@ public:
             std::bind(&R2DecisionNode::tick, this));
 
         // ── params ──────────────────────────────────────────────
-        nav_frame_id_ = this->declare_parameter<std::string>("nav_frame_id", "map");
+        nav_frame_id_ = this->declare_parameter<std::string>("nav_frame_id", "odom");
 
         // Zone1 arm command
         zone1_arm_command_ = static_cast<uint8_t>(
