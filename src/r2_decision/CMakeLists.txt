@@ -11,6 +11,7 @@ find_package(rclcpp_action REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(r2_interfaces REQUIRED)
+find_package(robot_serial REQUIRED)
 
 add_executable(r2_decision_node
   src/r2_decision_node.cpp
@@ -22,6 +23,7 @@ ament_target_dependencies(r2_decision_node
   nav2_msgs
   std_msgs
   r2_interfaces
+  robot_serial
 )
 
 install(TARGETS
