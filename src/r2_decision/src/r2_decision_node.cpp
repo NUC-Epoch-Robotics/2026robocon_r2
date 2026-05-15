@@ -61,6 +61,8 @@ struct WaypointTask
     double x;
     double y;
     double spin_rad;
+    uint8_t arm_command{0};  // 该点要发的手臂指令, 0=IDLE
+    bool skip_dock{false};   // 非矛头点跳过对接
 };
 
 struct Zone2Task
@@ -155,21 +157,27 @@ public:
             point_table_[n] = {n,
                                spearhead_base_x + (n - 1) * spearhead_spacing,
                                spearhead_base_y,
-                               spearhead_base_spin};
+                               spearhead_base_spin,
+                               zone1_arm_command_,
+                               false};  // 矛头点: 走抓取→对接流程
         }
 
         zone1_route_ids_ = this->declare_parameter<std::vector<int64_t>>(
             "zone1_route", std::vector<int64_t>{2, 1, 4, 5, 3, 6});
 
-        // Zone1 额外导航点 (非矛头, ID 7/8)
+        // Zone1 额外导航点 (非矛头, ID 7=上台阶, ID 8=下台阶)
         point_table_[7] = {7,
                            this->declare_parameter<double>("zone1_point_2_x", 0.0),
                            this->declare_parameter<double>("zone1_point_2_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_2_spin", 0.0)};
+                           this->declare_parameter<double>("zone1_point_2_spin", 0.0),
+                           r2_interfaces::msg::ArmCommand::UP_STAIRS,
+                           true};   // 上台阶: 发1, 跳过对接
         point_table_[8] = {8,
                            this->declare_parameter<double>("zone1_point_3_x", 0.0),
                            this->declare_parameter<double>("zone1_point_3_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_3_spin", 0.0)};
+                           this->declare_parameter<double>("zone1_point_3_spin", 0.0),
+                           r2_interfaces::msg::ArmCommand::DOWN_STAIRS,
+                           true};  // 下台阶: 发2, 跳过对接
 
         // R1 对接位置
         dock_r1_x_    = this->declare_parameter<double>("dock_r1_x",    0.0);
@@ -470,11 +478,14 @@ private:
             return;
         }
 
-        // ── Zone1 操作点 (抓矛头) ────────────────────────────────
+        // ── Zone1 操作点 ──────────────────────────────────────
         if (state_ == State::ZONE1_OPERATE_POINT)
         {
             const int point_id = zone1_route_ids_[current_zone1_index_];
-            if (!spearhead_exists_)
+            const auto it = point_table_.find(point_id);
+            const auto task = it->second;
+
+            if (!task.skip_dock && !spearhead_exists_)
             {
                 RCLCPP_INFO(get_logger(), "Zone1 point %d: no spearhead, skip", point_id);
                 ++current_zone1_index_;
@@ -483,8 +494,8 @@ private:
             }
 
             zone1_arm_retry_count_ = 0;
-            RCLCPP_INFO(get_logger(), "Zone1 point %d: spearhead found, GRIPPER_GRAB", point_id);
-            startReliableUpperCommand(zone1_arm_command_);
+            RCLCPP_INFO(get_logger(), "Zone1 point %d: arm cmd=%d", point_id, task.arm_command);
+            startReliableUpperCommand(task.arm_command);
             return;
         }
 
@@ -1095,22 +1106,35 @@ private:
         waiting_upper_ack_ = false;
         RCLCPP_INFO(get_logger(), "ARM DONE: cmd=%d success=%d", msg->command, msg->success);
 
-        // Zone1 抓取完成 → 去对接
-        if (state_ == State::ZONE1_OPERATE_POINT && msg->command == zone1_arm_command_)
+        // Zone1 操作完成
+        if (state_ == State::ZONE1_OPERATE_POINT)
         {
+            const auto it = point_table_.find(zone1_route_ids_[current_zone1_index_]);
+            const bool skip_dock = (it != point_table_.end()) && it->second.skip_dock;
+
             if (!msg->success && zone1_arm_retry_count_ < kZone1ArmMaxRetry)
             {
                 ++zone1_arm_retry_count_;
                 RCLCPP_WARN(get_logger(), "Zone1 arm retry %d/%d",
                             zone1_arm_retry_count_, kZone1ArmMaxRetry);
-                startReliableUpperCommand(zone1_arm_command_);
+                startReliableUpperCommand(msg->command);
                 return;
             }
             if (!msg->success)
-                RCLCPP_WARN(get_logger(), "Zone1 arm failed after retry, still try dock");
+                RCLCPP_WARN(get_logger(), "Zone1 arm failed after retry, skip");
 
             zone1_arm_retry_count_ = 0;
-            transitionTo(State::ZONE1_DOCK_R1);
+
+            if (skip_dock)
+            {
+                // 非矛头点: 直接走下个点
+                ++current_zone1_index_;
+                transitionTo(State::ZONE1_NAV_POINT);
+            }
+            else
+            {
+                transitionTo(State::ZONE1_DOCK_R1);
+            }
             return;
         }
 
@@ -1254,7 +1278,7 @@ private:
 
     // ── 参数值 ──────────────────────────────────────────────────
     std::string nav_frame_id_{"map"};
-    uint8_t zone1_arm_command_{r2_interfaces::msg::ArmCommand::GRIPPER_GRAB};
+    uint8_t zone1_arm_command_{r2_interfaces::msg::ArmCommand::IDLE};
 
     std::unordered_map<int, WaypointTask> point_table_;
     std::vector<int64_t> zone1_route_ids_;
