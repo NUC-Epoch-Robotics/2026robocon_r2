@@ -14,6 +14,7 @@
   <depend>nav2_msgs</depend>
   <depend>std_msgs</depend>
   <depend>r2_interfaces</depend>
+  <depend>robot_serial</depend>
 
   <export>
   <build_type>ament_cmake</build_type>
