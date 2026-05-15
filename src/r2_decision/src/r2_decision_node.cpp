@@ -38,6 +38,8 @@ enum class State
     ZONE1_NAV_POINT,
     ZONE1_OPERATE_POINT,
     ZONE1_DOCK_R1,
+    ZONE1_UP_STAIRS,
+    ZONE1_DOWN_STAIRS,
     ZONE1_FINISH,
     ZONE2_NAV_POINT,
     ZONE2_WAIT_SCENE_CONFIRM,
@@ -170,14 +172,14 @@ public:
                            this->declare_parameter<double>("zone1_point_2_x", 0.0),
                            this->declare_parameter<double>("zone1_point_2_y", 0.0),
                            this->declare_parameter<double>("zone1_point_2_spin", 0.0),
-                           1,
-                           true};   // 上台阶: 发1, 跳过对接
+                           0,
+                           true};   // 上台阶前导航点, 不发手臂指令
         point_table_[8] = {8,
                            this->declare_parameter<double>("zone1_point_3_x", 0.0),
                            this->declare_parameter<double>("zone1_point_3_y", 0.0),
                            this->declare_parameter<double>("zone1_point_3_spin", 0.0),
-                           2,
-                           true};  // 下台阶: 发2, 跳过对接
+                           0,
+                           true};  // 下台阶前导航点, 不发手臂指令
 
         // R1 对接位置
         dock_r1_x_    = this->declare_parameter<double>("dock_r1_x",    0.0);
@@ -360,9 +362,9 @@ private:
             }
             else
             {
-                RCLCPP_INFO(get_logger(), "Zone1 done: docks=%d, moving to Zone2",
+                RCLCPP_INFO(get_logger(), "Zone1 docks done: %d, going up stairs",
                             dock_success_count_);
-                transitionTo(State::ZONE1_FINISH);
+                transitionTo(State::ZONE1_UP_STAIRS);
             }
             return;
         }
@@ -408,10 +410,10 @@ private:
         auto elapsed = (now() - zone1_start_time_).seconds();
         if (elapsed > zone1_max_time_s_)
         {
-            RCLCPP_WARN(get_logger(), "Zone1 time limit reached (%.1fs), moving to Zone2", elapsed);
+            RCLCPP_WARN(get_logger(), "Zone1 time limit reached (%.1fs), going up stairs", elapsed);
             publishSpearEnable(false);
             publishLightboardEnable(false);
-            transitionTo(State::ZONE1_FINISH);
+            transitionTo(State::ZONE1_UP_STAIRS);
         }
     }
 
@@ -444,7 +446,7 @@ private:
         {
             if (current_zone1_index_ >= zone1_route_ids_.size())
             {
-                transitionTo(State::ZONE1_FINISH);
+                transitionTo(State::ZONE1_UP_STAIRS);
                 return;
             }
 
@@ -485,6 +487,14 @@ private:
             const auto it = point_table_.find(point_id);
             const auto task = it->second;
 
+            if (task.arm_command == 0)
+            {
+                RCLCPP_INFO(get_logger(), "Zone1 point %d: arm cmd=0, skip", point_id);
+                ++current_zone1_index_;
+                transitionTo(State::ZONE1_NAV_POINT);
+                return;
+            }
+
             if (!task.skip_dock && !spearhead_exists_)
             {
                 RCLCPP_INFO(get_logger(), "Zone1 point %d: no spearhead, skip", point_id);
@@ -518,6 +528,24 @@ private:
                     }
                     // 导航到达, tick() 中的 handleDockSpearheadTransition 接管等待
                 });
+            return;
+        }
+
+        // ── 上台阶 ──────────────────────────────────────────────
+        if (state_ == State::ZONE1_UP_STAIRS)
+        {
+            publishSpearEnable(false);
+            publishLightboardEnable(false);
+            RCLCPP_INFO(get_logger(), "Zone1: UP_STAIRS, arm cmd=1");
+            startReliableUpperCommand(1);
+            return;
+        }
+
+        // ── 下台阶 ──────────────────────────────────────────────
+        if (state_ == State::ZONE1_DOWN_STAIRS)
+        {
+            RCLCPP_INFO(get_logger(), "Zone1: DOWN_STAIRS, arm cmd=2");
+            startReliableUpperCommand(2);
             return;
         }
 
@@ -1137,6 +1165,40 @@ private:
             {
                 transitionTo(State::ZONE1_DOCK_R1);
             }
+            return;
+        }
+
+        // Zone1 上台阶完成
+        if (state_ == State::ZONE1_UP_STAIRS)
+        {
+            if (!msg->success && zone1_arm_retry_count_ < kZone1ArmMaxRetry)
+            {
+                ++zone1_arm_retry_count_;
+                RCLCPP_WARN(get_logger(), "Zone1 up stairs retry %d/%d",
+                            zone1_arm_retry_count_, kZone1ArmMaxRetry);
+                startReliableUpperCommand(msg->command);
+                return;
+            }
+            zone1_arm_retry_count_ = 0;
+            RCLCPP_INFO(get_logger(), "Zone1: up stairs done, going down stairs");
+            transitionTo(State::ZONE1_DOWN_STAIRS);
+            return;
+        }
+
+        // Zone1 下台阶完成
+        if (state_ == State::ZONE1_DOWN_STAIRS)
+        {
+            if (!msg->success && zone1_arm_retry_count_ < kZone1ArmMaxRetry)
+            {
+                ++zone1_arm_retry_count_;
+                RCLCPP_WARN(get_logger(), "Zone1 down stairs retry %d/%d",
+                            zone1_arm_retry_count_, kZone1ArmMaxRetry);
+                startReliableUpperCommand(msg->command);
+                return;
+            }
+            zone1_arm_retry_count_ = 0;
+            RCLCPP_INFO(get_logger(), "Zone1: down stairs done, planning Zone2");
+            transitionTo(State::ZONE1_FINISH);
             return;
         }
 
