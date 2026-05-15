@@ -44,24 +44,12 @@ private:
 
         switch (command)
         {
-        case r2_interfaces::msg::ArmCommand::SUCTION_EXTEND:
-            RCLCPP_INFO(this->get_logger(), "Fake suction success");
+        case r2_interfaces::msg::ArmCommand::UP_STAIRS:
+            RCLCPP_INFO(this->get_logger(), "Fake UP_STAIRS");
             break;
 
-        case r2_interfaces::msg::ArmCommand::GRIPPER_GRAB:
-            RCLCPP_INFO(this->get_logger(), "Fake gripper success");
-            break;
-
-        case r2_interfaces::msg::ArmCommand::GRAB_SCENE_1:
-            RCLCPP_INFO(this->get_logger(), "Fake GRAB_SCENE_1 success (low L1 high)");
-            break;
-
-        case r2_interfaces::msg::ArmCommand::GRAB_SCENE_2:
-            RCLCPP_INFO(this->get_logger(), "Fake GRAB_SCENE_2 success (high L1 low)");
-            break;
-
-        case r2_interfaces::msg::ArmCommand::GRAB_SCENE_3:
-            RCLCPP_INFO(this->get_logger(), "Fake GRAB_SCENE_3 success (low L2 high)");
+        case r2_interfaces::msg::ArmCommand::DOWN_STAIRS:
+            RCLCPP_INFO(this->get_logger(), "Fake DOWN_STAIRS");
             break;
 
         default:

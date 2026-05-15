@@ -1,11 +1,5 @@
 uint8 IDLE=0
-uint8 PICK_KFS=1
-uint8 PLACE_KFS=2
-uint8 PUSH_BUTTON=3
-uint8 SUCTION_EXTEND=4
-uint8 GRIPPER_GRAB=5
-uint8 GRAB_SCENE_1=6
-uint8 GRAB_SCENE_2=7
-uint8 GRAB_SCENE_3=8
+uint8 UP_STAIRS=1
+uint8 DOWN_STAIRS=2
 
 uint8 command
