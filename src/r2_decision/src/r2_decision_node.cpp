@@ -143,7 +143,7 @@ public:
         // Zone1 arm command
         zone1_arm_command_ = static_cast<uint8_t>(
             this->declare_parameter<int>("zone1_arm_command",
-                                         r2_interfaces::msg::ArmCommand::GRIPPER_GRAB));
+                                         r2_interfaces::msg::ArmCommand::IDLE));
 
         // Zone1 矛头位置: 基准点 + (n-1)*间距 (6个矛头等距排列, 200mm)
         double spearhead_base_x   = this->declare_parameter<double>("spearhead_base_x", 0.0);
@@ -520,8 +520,8 @@ private:
 
             if (zone2_tasks_.empty())
             {
-                RCLCPP_WARN(get_logger(), "Zone2: no tasks, go to MF exit");
-                transitionTo(State::GO_TO_MF_EXIT);
+                RCLCPP_WARN(get_logger(), "Zone2: no tasks, mission done");
+                transitionTo(State::DONE);
             }
             else
             {
@@ -666,23 +666,13 @@ private:
     {
         zone2_tasks_.clear();
 
-        // ── 无光板数据时的 fallback ──────────────────────────
+        // ── 无光板数据: 跳过 Zone2, 直通 DONE ──────────────────
         if (lightboard_map.size() != 12)
         {
-            RCLCPP_WARN(get_logger(), "buildZone2Route: lightboard map size=%zu, fallback to all",
+            RCLCPP_WARN(get_logger(),
+                        "buildZone2Route: no lightboard data (size=%zu), Zone2 skipped",
                         lightboard_map.size());
-            for (int idx = 0; idx < 12; ++idx)
-            {
-                Zone2Task t;
-                t.id = idx;
-                t.x = zone2_blocks_[idx].x;
-                t.y = zone2_blocks_[idx].y;
-                t.spin_rad = zone2_blocks_[idx].spin_rad;
-                t.grab_scene = zone2_blocks_[idx].grab_scene;
-                t.arm_command = sceneToArmCmd(t.grab_scene);
-                zone2_tasks_.push_back(t);
-            }
-            return;
+            return;  // zone2_tasks_ 留空, ZONE1_FINISH → DONE
         }
 
         // ── 1. 收集 R2 目标方块 & 构建可通过性 ──────────────
@@ -914,13 +904,9 @@ private:
 
     static uint8_t sceneToArmCmd(uint8_t scene)
     {
-        switch (scene)
-        {
-        case 1:  return r2_interfaces::msg::ArmCommand::GRAB_SCENE_1;
-        case 2:  return r2_interfaces::msg::ArmCommand::GRAB_SCENE_2;
-        case 3:  return r2_interfaces::msg::ArmCommand::GRAB_SCENE_3;
-        default: return r2_interfaces::msg::ArmCommand::GRIPPER_GRAB;
-        }
+        // TODO: 抓取指令待硬件确定后映射
+        (void)scene;
+        return r2_interfaces::msg::ArmCommand::IDLE;
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -951,12 +937,10 @@ private:
                     on_done(false);
                     return;
                 }
-                sendSpinGoal(spin_rad,
-                    [this, on_done](bool spin_ok)
-                    {
-                        nav_chain_in_progress_ = false;
-                        on_done(spin_ok);
-                    });
+                // TODO: spin 由 /spin topic 独立控制, 此处跳过
+                (void)spin_rad;
+                nav_chain_in_progress_ = false;
+                on_done(true);
             });
     }
 
@@ -1034,6 +1018,12 @@ private:
 
     void startReliableUpperCommand(uint8_t cmd)
     {
+        // 硬件要求: 先发 IDLE(0) 再发目标指令
+        if (cmd != r2_interfaces::msg::ArmCommand::IDLE)
+        {
+            publishUpperCommand(r2_interfaces::msg::ArmCommand::IDLE);
+        }
+
         pending_upper_cmd_ = cmd;
         waiting_upper_ack_ = true;
 
