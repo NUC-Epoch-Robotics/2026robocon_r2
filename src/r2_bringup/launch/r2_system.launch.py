@@ -48,17 +48,19 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'sim_mode': sim_mode,
-                # Zone1 三个测试坐标
-                'zone1_point_1_x': -0.352,
-                'zone1_point_1_y': -0.959,
-                'zone1_point_1_spin': -0.622,
+                # 矛头基准点 (1号矛头), 间距200mm, 顺序 2→1→4→5→3→6
+                'spearhead_base_x': -0.002,
+                'spearhead_base_y': -0.959,
+                'spearhead_base_spin': -0.622,
+                'spearhead_spacing': 0.2,
+                'zone1_route': [2, 1, 4, 5, 3, 6],
+                # 其他 Zone1 导航点 (非矛头)
                 'zone1_point_2_x': 1.7,
                 'zone1_point_2_y': 1.42,
                 'zone1_point_2_spin': -0.622,
                 'zone1_point_3_x': 1.9,
                 'zone1_point_3_y': 1.42,
                 'zone1_point_3_spin': -0.622,
-                'zone1_route': [1, 2, 3],
             }],
         ),
 

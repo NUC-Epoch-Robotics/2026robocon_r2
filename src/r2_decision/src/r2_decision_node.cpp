@@ -145,34 +145,31 @@ public:
             this->declare_parameter<int>("zone1_arm_command",
                                          r2_interfaces::msg::ArmCommand::GRIPPER_GRAB));
 
-        // Zone1 巡点坐标 (1~6)
-        point_table_[1] = {1,
-                           this->declare_parameter<double>("zone1_point_1_x", 0.0),
-                           this->declare_parameter<double>("zone1_point_1_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_1_spin", 0.0)};
-        point_table_[2] = {2,
+        // Zone1 矛头位置: 基准点 + (n-1)*间距 (6个矛头等距排列, 200mm)
+        double spearhead_base_x   = this->declare_parameter<double>("spearhead_base_x", 0.0);
+        double spearhead_base_y   = this->declare_parameter<double>("spearhead_base_y", 0.0);
+        double spearhead_base_spin = this->declare_parameter<double>("spearhead_base_spin", 0.0);
+        double spearhead_spacing  = this->declare_parameter<double>("spearhead_spacing", 0.2);
+        for (int n = 1; n <= 6; ++n)
+        {
+            point_table_[n] = {n,
+                               spearhead_base_x + (n - 1) * spearhead_spacing,
+                               spearhead_base_y,
+                               spearhead_base_spin};
+        }
+
+        zone1_route_ids_ = this->declare_parameter<std::vector<int64_t>>(
+            "zone1_route", std::vector<int64_t>{2, 1, 4, 5, 3, 6});
+
+        // Zone1 额外导航点 (非矛头, ID 7/8)
+        point_table_[7] = {7,
                            this->declare_parameter<double>("zone1_point_2_x", 0.0),
                            this->declare_parameter<double>("zone1_point_2_y", 0.0),
                            this->declare_parameter<double>("zone1_point_2_spin", 0.0)};
-        point_table_[3] = {3,
+        point_table_[8] = {8,
                            this->declare_parameter<double>("zone1_point_3_x", 0.0),
                            this->declare_parameter<double>("zone1_point_3_y", 0.0),
                            this->declare_parameter<double>("zone1_point_3_spin", 0.0)};
-        point_table_[4] = {4,
-                           this->declare_parameter<double>("zone1_point_4_x", 0.0),
-                           this->declare_parameter<double>("zone1_point_4_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_4_spin", 0.0)};
-        point_table_[5] = {5,
-                           this->declare_parameter<double>("zone1_point_5_x", 0.0),
-                           this->declare_parameter<double>("zone1_point_5_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_5_spin", 0.0)};
-        point_table_[6] = {6,
-                           this->declare_parameter<double>("zone1_point_6_x", 0.0),
-                           this->declare_parameter<double>("zone1_point_6_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_6_spin", 0.0)};
-
-        zone1_route_ids_ = this->declare_parameter<std::vector<int64_t>>(
-            "zone1_route", std::vector<int64_t>{2, 1, 5, 4, 6, 3});
 
         // R1 对接位置
         dock_r1_x_    = this->declare_parameter<double>("dock_r1_x",    0.0);
