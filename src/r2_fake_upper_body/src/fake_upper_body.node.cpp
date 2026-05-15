@@ -52,6 +52,18 @@ private:
             RCLCPP_INFO(this->get_logger(), "Fake gripper success");
             break;
 
+        case r2_interfaces::msg::ArmCommand::GRAB_SCENE_1:
+            RCLCPP_INFO(this->get_logger(), "Fake GRAB_SCENE_1 success (low L1 high)");
+            break;
+
+        case r2_interfaces::msg::ArmCommand::GRAB_SCENE_2:
+            RCLCPP_INFO(this->get_logger(), "Fake GRAB_SCENE_2 success (high L1 low)");
+            break;
+
+        case r2_interfaces::msg::ArmCommand::GRAB_SCENE_3:
+            RCLCPP_INFO(this->get_logger(), "Fake GRAB_SCENE_3 success (low L2 high)");
+            break;
+
         default:
             break;
         }

@@ -50,6 +50,7 @@ class LightboardDetectorNode(Node):
         self.declare_parameter("history_size", 5)
         self.declare_parameter("stable_frames_required", 3)
         self.declare_parameter("flip_horizontal", False)
+        self.declare_parameter("start_enabled", True)
 
         self.camera_index = int(self.get_parameter("camera_index").value)
         self.fps = float(self.get_parameter("fps").value)
@@ -69,6 +70,7 @@ class LightboardDetectorNode(Node):
         self.history_size = int(self.get_parameter("history_size").value)
         self.stable_frames_required = int(self.get_parameter("stable_frames_required").value)
         self.flip_horizontal = bool(self.get_parameter("flip_horizontal").value)
+        self.enabled = bool(self.get_parameter("start_enabled").value)
 
         self.rows = max(1, self.rows)
         self.cols = max(1, self.cols)
@@ -80,18 +82,17 @@ class LightboardDetectorNode(Node):
         self.map_pub = self.create_publisher(UInt8MultiArray, "lightboard/map", 10)
         self.stable_pub = self.create_publisher(Bool, "lightboard/stable", 10)
 
+        self.enable_sub = self.create_subscription(
+            Bool, "lightboard/enable", self._on_enable, 10
+        )
+
         self.history: Deque[Tuple[int, ...]] = deque(maxlen=self.history_size)
         self.last_stable_map: Optional[Tuple[int, ...]] = None
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.last_open_failed: bool = False
 
-        self.cap = cv2.VideoCapture(self.camera_index)
-        if not self.cap.isOpened():
-            self.get_logger().error(
-                f"Failed to open camera index {self.camera_index}. Check camera connection."
-            )
-        else:
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-            self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+        if self.enabled:
+            self._ensure_camera_open()
 
         interval = 1.0 / max(self.fps, 1.0)
         self.timer = self.create_timer(interval, self.process_frame)
@@ -99,10 +100,28 @@ class LightboardDetectorNode(Node):
             f"lightboard_detector started: grid={self.rows}x{self.cols}, fps={self.fps:.1f}"
         )
 
+    def _on_enable(self, msg: Bool) -> None:
+        if self.enabled == msg.data:
+            return
+        self.enabled = msg.data
+        self.history.clear()
+        self.last_stable_map = None
+
+        if self.enabled:
+            self.get_logger().info("lightboard_detector ENABLED")
+            self._ensure_camera_open()
+        else:
+            self.get_logger().info("lightboard_detector DISABLED")
+            self._release_camera()
+            self.stable_pub.publish(Bool(data=False))
+
     def process_frame(self) -> None:
-        if self.cap is None or not self.cap.isOpened():
+        if not self.enabled:
+            return
+        if not self._ensure_camera_open():
             return
 
+        assert self.cap is not None
         ok, frame = self.cap.read()
         if not ok or frame is None:
             return
@@ -262,9 +281,30 @@ class LightboardDetectorNode(Node):
         )
         return best_map, stable
 
-    def destroy_node(self) -> bool:
+    def _ensure_camera_open(self) -> bool:
+        if self.cap is not None and self.cap.isOpened():
+            return True
+        self.cap = cv2.VideoCapture(self.camera_index)
+        if not self.cap.isOpened():
+            if not self.last_open_failed:
+                self.get_logger().error(
+                    f"Failed to open camera index {self.camera_index}"
+                )
+            self.last_open_failed = True
+            return False
+        self.last_open_failed = False
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+        self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+        return True
+
+    def _release_camera(self) -> None:
         if self.cap is not None and self.cap.isOpened():
             self.cap.release()
+        self.cap = None
+
+    def destroy_node(self) -> bool:
+        self._release_camera()
         return super().destroy_node()
 
 

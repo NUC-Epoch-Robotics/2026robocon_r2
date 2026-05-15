@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -15,6 +16,7 @@
 
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/u_int8.hpp"
+#include "std_msgs/msg/u_int8_multi_array.hpp"
 
 #include "r2_interfaces/msg/arm_ack.hpp"
 #include "r2_interfaces/msg/arm_command.hpp"
@@ -34,7 +36,12 @@ enum class State
     WAIT_START,
     ZONE1_NAV_POINT,
     ZONE1_OPERATE_POINT,
+    ZONE1_DOCK_R1,
     ZONE1_FINISH,
+    ZONE2_NAV_POINT,
+    ZONE2_WAIT_SCENE_CONFIRM,
+    ZONE2_GRAB,
+    ZONE2_FINISH,
     GO_TO_MF_EXIT,
     DONE
 };
@@ -56,25 +63,51 @@ struct WaypointTask
     double spin_rad;
 };
 
+struct Zone2Task
+{
+    int id;
+    double x;
+    double y;
+    double spin_rad;
+    uint8_t grab_scene;  // 1, 2, or 3
+    uint8_t arm_command;
+};
+
+struct Zone2BlockInfo
+{
+    double x;
+    double y;
+    double spin_rad;
+    uint8_t grab_scene;  // 1/2/3, 硬编码
+};
+
 class R2DecisionNode : public rclcpp::Node
 {
 public:
     R2DecisionNode() : Node("r2_decision_node")
     {
+        // ── publishers ──────────────────────────────────────────
         upper_cmd_pub_ = create_publisher<r2_interfaces::msg::ArmCommand>(
             "/r2/upper_body/command", 10);
 
         spear_enable_pub_ = create_publisher<std_msgs::msg::Bool>(
             "spearhead/enable", 10);
 
+        lightboard_enable_pub_ = create_publisher<std_msgs::msg::Bool>(
+            "lightboard/enable", 10);
+
+        grab_scene_enable_pub_ = create_publisher<std_msgs::msg::Bool>(
+            "grab_scene/enable", 10);
+        grab_scene_expected_pub_ = create_publisher<std_msgs::msg::UInt8>(
+            "grab_scene/expected_scene", 10);
+
+        // ── action clients ──────────────────────────────────────
         nav_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(
-            this,
-            "navigate_to_pose");
-
+            this, "navigate_to_pose");
         spin_client_ = rclcpp_action::create_client<Spin>(
-            this,
-            "spin");
+            this, "spin");
 
+        // ── subscriptions ───────────────────────────────────────
         upper_ack_sub_ = create_subscription<r2_interfaces::msg::ArmAck>(
             "/r2/upper_body/ack", 10,
             std::bind(&R2DecisionNode::onUpperAck, this, _1));
@@ -87,19 +120,32 @@ public:
             "spearhead/exists", 10,
             std::bind(&R2DecisionNode::onSpearExists, this, _1));
 
+        lightboard_map_sub_ = create_subscription<std_msgs::msg::UInt8MultiArray>(
+            "lightboard/map", 10,
+            std::bind(&R2DecisionNode::onLightboardMap, this, _1));
+
+        grab_scene_ready_sub_ = create_subscription<std_msgs::msg::Bool>(
+            "grab_scene/ready", 10,
+            std::bind(&R2DecisionNode::onGrabSceneReady, this, _1));
+
         button_state_sub_ = create_subscription<std_msgs::msg::UInt8>(
             "r2/control/button_state", 10,
             std::bind(&R2DecisionNode::onButtonState, this, _1));
 
+        // ── main loop ───────────────────────────────────────────
         timer_ = create_wall_timer(
             std::chrono::milliseconds(20),
             std::bind(&R2DecisionNode::tick, this));
 
+        // ── params ──────────────────────────────────────────────
         nav_frame_id_ = this->declare_parameter<std::string>("nav_frame_id", "map");
-        zone1_arm_command_ = static_cast<uint8_t>(
-            this->declare_parameter<int>("zone1_arm_command", r2_interfaces::msg::ArmCommand::GRIPPER_GRAB));
 
-        // TODO: 按现场标定更新 1~6 号点坐标。
+        // Zone1 arm command
+        zone1_arm_command_ = static_cast<uint8_t>(
+            this->declare_parameter<int>("zone1_arm_command",
+                                         r2_interfaces::msg::ArmCommand::GRIPPER_GRAB));
+
+        // Zone1 巡点坐标 (1~6)
         point_table_[1] = {1,
                            this->declare_parameter<double>("zone1_point_1_x", 0.0),
                            this->declare_parameter<double>("zone1_point_1_y", 0.0),
@@ -127,15 +173,64 @@ public:
 
         zone1_route_ids_ = {2, 1, 5, 4, 6, 3};
 
-        mf_exit_x_ = this->declare_parameter<double>("mf_exit_x", 3.2);
-        mf_exit_y_ = this->declare_parameter<double>("mf_exit_y", 0.0);
+        // R1 对接位置
+        dock_r1_x_    = this->declare_parameter<double>("dock_r1_x",    0.0);
+        dock_r1_y_    = this->declare_parameter<double>("dock_r1_y",    0.0);
+        dock_r1_spin_ = this->declare_parameter<double>("dock_r1_spin", 0.0);
+
+        // Zone2 12个方块的物理坐标 和 grab_scene (硬编码场景类型，坐标标定后填入)
+        // 地形 (上=入口, 下=出口):
+        //   col0 col1 col2
+        //    2    1    2    row0 (入口)
+        //    1    2    3    row1
+        //    2    3    2    row2
+        //    1    2    1    row3 (出口)
+        for (int idx = 0; idx < 12; ++idx)
+        {
+            char px[32], py[32], ps[32];
+            snprintf(px, sizeof(px), "zone2_block_%d_x", idx);
+            snprintf(py, sizeof(py), "zone2_block_%d_y", idx);
+            snprintf(ps, sizeof(ps), "zone2_block_%d_spin", idx);
+            zone2_blocks_[idx].x = this->declare_parameter<double>(px, 0.0);
+            zone2_blocks_[idx].y = this->declare_parameter<double>(py, 0.0);
+            zone2_blocks_[idx].spin_rad = this->declare_parameter<double>(ps, 0.0);
+        }
+        // grab_scene 硬编码 (入口→出口, 从左到右)
+        zone2_blocks_[0].grab_scene  = 2;
+        zone2_blocks_[1].grab_scene  = 1;
+        zone2_blocks_[2].grab_scene  = 2;
+        zone2_blocks_[3].grab_scene  = 1;
+        zone2_blocks_[4].grab_scene  = 2;
+        zone2_blocks_[5].grab_scene  = 3;
+        zone2_blocks_[6].grab_scene  = 2;
+        zone2_blocks_[7].grab_scene  = 3;
+        zone2_blocks_[8].grab_scene  = 2;
+        zone2_blocks_[9].grab_scene  = 1;
+        zone2_blocks_[10].grab_scene = 2;
+        zone2_blocks_[11].grab_scene = 1;
+
+        // 超时参数
+        zone1_max_time_s_ = this->declare_parameter<double>("zone1_max_time_s", 120.0);
+        scene_confirm_timeout_s_ = this->declare_parameter<double>("scene_confirm_timeout_s", 5.0);
+        dock_timeout_s_ = this->declare_parameter<double>("dock_timeout_s", 15.0);
+
+        // MF出口
+        mf_exit_x_        = this->declare_parameter<double>("mf_exit_x", 3.2);
+        mf_exit_y_        = this->declare_parameter<double>("mf_exit_y", 0.0);
         mf_exit_spin_rad_ = this->declare_parameter<double>("mf_exit_spin_rad", 0.0);
 
-        RCLCPP_INFO(get_logger(), "R2 Decision Node Started");
+        // ── 模拟模式: 无真实硬件时打印决策输出 ──
+        sim_mode_ = this->declare_parameter<bool>("sim_mode", false);
+
+        RCLCPP_INFO(get_logger(), "R2 Decision Node Started (sim_mode=%d)", sim_mode_);
     }
 
 private:
     using CompletionCb = std::function<void(bool)>;
+
+    // ═════════════════════════════════════════════════════════════
+    // 主循环
+    // ═════════════════════════════════════════════════════════════
 
     void tick()
     {
@@ -146,20 +241,27 @@ private:
 
         handleButtonTransitions();
         handleUpperCommandReliability();
+        handleDockSpearheadTransition();
+        handleSceneConfirmTimeout();
+        handleZone1TimeLimit();
     }
+
+    // ═════════════════════════════════════════════════════════════
+    // 按钮
+    // ═════════════════════════════════════════════════════════════
 
     void handleButtonTransitions()
     {
         if (state_ == State::DONE)
-        {
             return;
-        }
 
         if (pending_start_ && state_ == State::WAIT_START)
         {
             pending_start_ = false;
             current_zone1_index_ = 0;
+            dock_success_count_ = 0;
             zone1_arm_retry_count_ = 0;
+            zone1_start_time_ = now();
             publishSpearEnable(true);
             transitionTo(State::ZONE1_NAV_POINT);
             return;
@@ -168,13 +270,12 @@ private:
         if (pending_zone1_retry_)
         {
             if (nav_chain_in_progress_)
-            {
                 return;
-            }
-
             pending_zone1_retry_ = false;
             current_zone1_index_ = 0;
+            dock_success_count_ = 0;
             zone1_arm_retry_count_ = 0;
+            zone1_start_time_ = now();
             publishSpearEnable(true);
             transitionTo(State::ZONE1_NAV_POINT);
             return;
@@ -193,18 +294,146 @@ private:
         }
     }
 
+    // ═════════════════════════════════════════════════════════════
+    // 对接: 矛头消失 = 对接成功
+    // ═════════════════════════════════════════════════════════════
+
+    void handleDockSpearheadTransition()
+    {
+        if (state_ != State::ZONE1_DOCK_R1)
+            return;
+        if (nav_chain_in_progress_)
+            return;
+
+        // 尚未到达对接位时，记录矛头初始状态
+        if (!dock_arrived_)
+        {
+            dock_arrived_ = true;
+            spearhead_was_present_ = spearhead_exists_;
+            dock_start_time_ = now();
+            RCLCPP_INFO(get_logger(),
+                        "Arrived at R1 dock. spearhead present=%d, waiting for R1 to take it...",
+                        spearhead_was_present_);
+            return;
+        }
+
+        // 矛头从有→无 = R1取走, 对接成功
+        if (spearhead_was_present_ && !spearhead_exists_)
+        {
+            dock_success_count_++;
+            RCLCPP_INFO(get_logger(),
+                        ">>> DOCK SUCCESS #%d: spearhead taken by R1 <<<",
+                        dock_success_count_);
+
+            // 记录光板数据
+            if (lightboard_map_received_)
+            {
+                latest_lightboard_map_ = lightboard_map_;
+                RCLCPP_INFO(get_logger(),
+                            "Lightboard map captured: [%d %d %d %d %d %d %d %d %d %d %d %d]",
+                            latest_lightboard_map_[0], latest_lightboard_map_[1],
+                            latest_lightboard_map_[2], latest_lightboard_map_[3],
+                            latest_lightboard_map_[4], latest_lightboard_map_[5],
+                            latest_lightboard_map_[6], latest_lightboard_map_[7],
+                            latest_lightboard_map_[8], latest_lightboard_map_[9],
+                            latest_lightboard_map_[10], latest_lightboard_map_[11]);
+            }
+            else
+            {
+                RCLCPP_WARN(get_logger(), "No lightboard map received during dock");
+            }
+
+            // 判断是否继续一区循环
+            bool keep_going = (dock_success_count_ < kMaxDocks) &&
+                              (current_zone1_index_ + 1 < zone1_route_ids_.size());
+
+            if (keep_going)
+            {
+                ++current_zone1_index_;
+                transitionTo(State::ZONE1_NAV_POINT);
+            }
+            else
+            {
+                RCLCPP_INFO(get_logger(), "Zone1 done: docks=%d, moving to Zone2",
+                            dock_success_count_);
+                transitionTo(State::ZONE1_FINISH);
+            }
+            return;
+        }
+
+        // 对接超时
+        auto elapsed = (now() - dock_start_time_).seconds();
+        if (elapsed > dock_timeout_s_)
+        {
+            RCLCPP_WARN(get_logger(), "Dock timeout (%.1fs), skip this dock", elapsed);
+            ++current_zone1_index_;
+            transitionTo(State::ZONE1_NAV_POINT);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 场景确认超时
+    // ═════════════════════════════════════════════════════════════
+
+    void handleSceneConfirmTimeout()
+    {
+        if (state_ != State::ZONE2_WAIT_SCENE_CONFIRM)
+            return;
+
+        auto elapsed = (now() - scene_confirm_start_time_).seconds();
+        if (elapsed > scene_confirm_timeout_s_)
+        {
+            RCLCPP_WARN(get_logger(), "Scene confirm timeout (%.1fs), skip block", elapsed);
+            publishGrabSceneEnable(false);
+            ++current_zone2_index_;
+            transitionTo(State::ZONE2_NAV_POINT);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 一区总时间限制
+    // ═════════════════════════════════════════════════════════════
+
+    void handleZone1TimeLimit()
+    {
+        if (state_ < State::ZONE1_NAV_POINT || state_ > State::ZONE1_DOCK_R1)
+            return;
+
+        auto elapsed = (now() - zone1_start_time_).seconds();
+        if (elapsed > zone1_max_time_s_)
+        {
+            RCLCPP_WARN(get_logger(), "Zone1 time limit reached (%.1fs), moving to Zone2", elapsed);
+            publishSpearEnable(false);
+            publishLightboardEnable(false);
+            transitionTo(State::ZONE1_FINISH);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 状态机
+    // ═════════════════════════════════════════════════════════════
+
     void transitionTo(State next)
     {
+        if (sim_mode_)
+        {
+            RCLCPP_INFO(get_logger(), "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            RCLCPP_INFO(get_logger(), "  [SIM] state: %d → %d", static_cast<int>(state_),
+                        static_cast<int>(next));
+            RCLCPP_INFO(get_logger(), "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        }
+
         state_ = next;
-        RCLCPP_INFO(get_logger(), "Transition to state %d", static_cast<int>(state_));
 
         if (state_ == State::WAIT_START)
         {
             publishSpearEnable(false);
-            RCLCPP_INFO(get_logger(), "Waiting START button");
+            publishLightboardEnable(false);
+            RCLCPP_INFO(get_logger(), "Waiting START button...");
             return;
         }
 
+        // ── Zone1 导航到点 ──────────────────────────────────────
         if (state_ == State::ZONE1_NAV_POINT)
         {
             if (current_zone1_index_ >= zone1_route_ids_.size())
@@ -217,74 +446,166 @@ private:
             const auto it = point_table_.find(point_id);
             if (it == point_table_.end())
             {
-                RCLCPP_WARN(get_logger(), "Missing point id=%d, skip", point_id);
+                RCLCPP_WARN(get_logger(), "Zone1: missing point id=%d, skip", point_id);
                 ++current_zone1_index_;
                 transitionTo(State::ZONE1_NAV_POINT);
                 return;
             }
 
             const auto task = it->second;
-            RCLCPP_INFO(get_logger(), "Zone1 nav -> point %d", task.id);
+            RCLCPP_INFO(get_logger(), "Zone1: nav → point %d (%.2f, %.2f)",
+                        task.id, task.x, task.y);
             sendNavigateAndSpin(
-                task.x,
-                task.y,
-                task.spin_rad,
+                task.x, task.y, task.spin_rad,
                 [this](bool success)
                 {
                     if (!success)
                     {
-                        RCLCPP_WARN(get_logger(), "Zone1 point nav failed, skip to next point");
+                        RCLCPP_WARN(get_logger(), "Zone1: nav to point failed, skip");
                         ++current_zone1_index_;
                         transitionTo(State::ZONE1_NAV_POINT);
                         return;
                     }
-
                     if (state_ == State::ZONE1_NAV_POINT)
-                    {
                         transitionTo(State::ZONE1_OPERATE_POINT);
-                    }
                 });
             return;
         }
 
+        // ── Zone1 操作点 (抓矛头) ────────────────────────────────
         if (state_ == State::ZONE1_OPERATE_POINT)
         {
             const int point_id = zone1_route_ids_[current_zone1_index_];
             if (!spearhead_exists_)
             {
-                RCLCPP_INFO(get_logger(), "Point %d: spearhead not found, go next", point_id);
+                RCLCPP_INFO(get_logger(), "Zone1 point %d: no spearhead, skip", point_id);
                 ++current_zone1_index_;
                 transitionTo(State::ZONE1_NAV_POINT);
                 return;
             }
 
             zone1_arm_retry_count_ = 0;
-            RCLCPP_INFO(get_logger(), "Point %d: spearhead found, execute arm cmd=%d", point_id, zone1_arm_command_);
+            RCLCPP_INFO(get_logger(), "Zone1 point %d: spearhead found, GRIPPER_GRAB", point_id);
             startReliableUpperCommand(zone1_arm_command_);
             return;
         }
 
-        if (state_ == State::ZONE1_FINISH)
+        // ── Zone1 对接 R1 ───────────────────────────────────────
+        if (state_ == State::ZONE1_DOCK_R1)
         {
-            publishSpearEnable(false);
-            transitionTo(State::GO_TO_MF_EXIT);
-            return;
-        }
+            dock_arrived_ = false;
+            publishLightboardEnable(true);
 
-        if (state_ == State::GO_TO_MF_EXIT)
-        {
+            RCLCPP_INFO(get_logger(), "Zone1: nav → R1 dock (%.2f, %.2f)",
+                        dock_r1_x_, dock_r1_y_);
             sendNavigateAndSpin(
-                mf_exit_x_,
-                mf_exit_y_,
-                mf_exit_spin_rad_,
+                dock_r1_x_, dock_r1_y_, dock_r1_spin_,
                 [this](bool success)
                 {
                     if (!success)
                     {
-                        RCLCPP_WARN(get_logger(), "GO_TO_MF_EXIT failed");
+                        RCLCPP_WARN(get_logger(), "Zone1: nav to R1 dock failed!");
                         return;
                     }
+                    // 导航到达, tick() 中的 handleDockSpearheadTransition 接管等待
+                });
+            return;
+        }
 
+        // ── Zone1 结束 → 规划 Zone2 ─────────────────────────────
+        if (state_ == State::ZONE1_FINISH)
+        {
+            publishSpearEnable(false);
+            publishLightboardEnable(false);
+            buildZone2Route(latest_lightboard_map_);
+            current_zone2_index_ = 0;
+
+            if (zone2_tasks_.empty())
+            {
+                RCLCPP_WARN(get_logger(), "Zone2: no tasks, go to MF exit");
+                transitionTo(State::GO_TO_MF_EXIT);
+            }
+            else
+            {
+                RCLCPP_INFO(get_logger(), "Zone2: %zu tasks planned", zone2_tasks_.size());
+                transitionTo(State::ZONE2_NAV_POINT);
+            }
+            return;
+        }
+
+        // ── Zone2 导航到方块 ────────────────────────────────────
+        if (state_ == State::ZONE2_NAV_POINT)
+        {
+            if (current_zone2_index_ >= zone2_tasks_.size())
+            {
+                transitionTo(State::ZONE2_FINISH);
+                return;
+            }
+
+            const auto &task = zone2_tasks_[current_zone2_index_];
+            RCLCPP_INFO(get_logger(), "Zone2: nav → block %d (%.2f,%.2f) scene=%d",
+                        task.id, task.x, task.y, task.grab_scene);
+
+            sendNavigateAndSpin(
+                task.x, task.y, task.spin_rad,
+                [this](bool success)
+                {
+                    if (!success)
+                    {
+                        RCLCPP_WARN(get_logger(), "Zone2: nav failed, skip");
+                        ++current_zone2_index_;
+                        transitionTo(State::ZONE2_NAV_POINT);
+                        return;
+                    }
+                    if (state_ == State::ZONE2_NAV_POINT)
+                        transitionTo(State::ZONE2_WAIT_SCENE_CONFIRM);
+                });
+            return;
+        }
+
+        // ── Zone2 等待场景确认 ──────────────────────────────────
+        if (state_ == State::ZONE2_WAIT_SCENE_CONFIRM)
+        {
+            const auto &task = zone2_tasks_[current_zone2_index_];
+            publishGrabSceneExpected(task.grab_scene);
+            publishGrabSceneEnable(true);
+            scene_confirm_start_time_ = now();
+            RCLCPP_INFO(get_logger(), "Zone2 block %d: waiting scene %d confirmation...",
+                        task.id, task.grab_scene);
+            // onGrabSceneReady 驱动跳转
+            return;
+        }
+
+        // ── Zone2 抓取 ──────────────────────────────────────────
+        if (state_ == State::ZONE2_GRAB)
+        {
+            publishGrabSceneEnable(false);
+            const auto &task = zone2_tasks_[current_zone2_index_];
+            RCLCPP_INFO(get_logger(), "Zone2 block %d: scene confirmed, arm cmd=%d",
+                        task.id, task.arm_command);
+            zone2_arm_retry_count_ = 0;
+            startReliableUpperCommand(task.arm_command);
+            return;
+        }
+
+        // ── Zone2 结束 ──────────────────────────────────────────
+        if (state_ == State::ZONE2_FINISH)
+        {
+            publishGrabSceneEnable(false);
+            RCLCPP_INFO(get_logger(), "Zone2 finished, go to MF exit");
+            transitionTo(State::GO_TO_MF_EXIT);
+            return;
+        }
+
+        // ── 去MF出口 ────────────────────────────────────────────
+        if (state_ == State::GO_TO_MF_EXIT)
+        {
+            sendNavigateAndSpin(
+                mf_exit_x_, mf_exit_y_, mf_exit_spin_rad_,
+                [this](bool success)
+                {
+                    if (!success)
+                        RCLCPP_WARN(get_logger(), "GO_TO_MF_EXIT nav failed");
                     if (state_ == State::GO_TO_MF_EXIT)
                     {
                         publishSpearEnable(false);
@@ -294,12 +615,319 @@ private:
             return;
         }
 
+        // ── 完赛 ────────────────────────────────────────────────
         if (state_ == State::DONE)
         {
             publishSpearEnable(false);
-            RCLCPP_INFO(get_logger(), "Mission finished");
+            publishLightboardEnable(false);
+            RCLCPP_INFO(get_logger(), "=== MISSION COMPLETE ===");
         }
     }
+
+    // ═════════════════════════════════════════════════════════════
+    // Zone2 路径规划 — 遵循规则 4.4.13~4.4.19
+    // ═════════════════════════════════════════════════════════════
+    //
+    // 树林 3×4 布局 (入口在上, 出口在下):
+    //   col:  0   1   2
+    //   row0:  0   1   2   ← 入口方块 1/2/3 (4.4.13)
+    //   row1:  3   4   5
+    //   row2:  6   7   8
+    //   row3:  9  10  11   ← 出口方块 10/11/12 (4.4.19)
+    //
+    // 约束:
+    //   4.4.14 — 只能拿取相邻方块(四连通)上的 KFS
+    //   4.4.13 — 必须从入口方块(0/1/2)进入树林
+    //   4.4.19 — 必须从出口方块(9/10/11)离开树林
+    //   4.4.15 — 入口方块有 R2 KFS 时，第一个必须从入口区收集
+    //   4.4.16 — 离开树林前必须携带至少 1 个 R2 KFS
+    //   8.8    — 不得接触假 KFS (FAKE=3)
+    //   8.7    — 不得接触 R1 KFS (R1=1)
+    //   8.9    — 不得完全进入有 KFS 的方块 (R2 从相邻方块部分进入)
+
+    // 四连通邻接表
+    static constexpr int ADJ[12][4] = {
+        {1, 3, -1, -1},     // 0
+        {0, 2, 4, -1},      // 1
+        {1, 5, -1, -1},     // 2
+        {0, 4, 6, -1},      // 3
+        {1, 3, 5, 7},       // 4
+        {2, 4, 8, -1},      // 5
+        {3, 7, 9, -1},      // 6
+        {4, 6, 8, 10},      // 7
+        {5, 7, 11, -1},     // 8
+        {6, 10, -1, -1},    // 9
+        {7, 9, 11, -1},     // 10
+        {8, 10, -1, -1},    // 11
+    };
+
+    static bool is_entry_block(int idx) { return idx == 0 || idx == 1 || idx == 2; }
+    static bool is_exit_block(int idx)  { return idx == 9 || idx == 10 || idx == 11; }
+
+    void buildZone2Route(const std::vector<uint8_t> &lightboard_map)
+    {
+        zone2_tasks_.clear();
+
+        // ── 无光板数据时的 fallback ──────────────────────────
+        if (lightboard_map.size() != 12)
+        {
+            RCLCPP_WARN(get_logger(), "buildZone2Route: lightboard map size=%zu, fallback to all",
+                        lightboard_map.size());
+            for (int idx = 0; idx < 12; ++idx)
+            {
+                Zone2Task t;
+                t.id = idx;
+                t.x = zone2_blocks_[idx].x;
+                t.y = zone2_blocks_[idx].y;
+                t.spin_rad = zone2_blocks_[idx].spin_rad;
+                t.grab_scene = zone2_blocks_[idx].grab_scene;
+                t.arm_command = sceneToArmCmd(t.grab_scene);
+                zone2_tasks_.push_back(t);
+            }
+            return;
+        }
+
+        // ── 1. 收集 R2 目标方块 & 构建可通过性 ──────────────
+        // 可通过: EMPTY(0) 或 R2(2); 不可通过: R1(1) 或 FAKE(3)
+        // 注意: R2 方块允许"部分进入"(FAQ), 故视为可通过
+        std::vector<int> r2_targets;
+        bool passable[12] = {false};
+
+        for (int i = 0; i < 12; ++i)
+        {
+            if (lightboard_map[i] == 2)
+                r2_targets.push_back(i);
+            passable[i] = (lightboard_map[i] == 0 || lightboard_map[i] == 2);
+        }
+
+        // ── 2. 无 R2 KFS 可收集 ─────────────────────────────
+        if (r2_targets.empty())
+        {
+            RCLCPP_WARN(get_logger(),
+                        "buildZone2Route: no R2 blocks on lightboard "
+                        "(4.4.16 violated: cannot leave forest without KFS!)");
+            return;
+        }
+
+        // ── 3. BFS 计算入口到各方块的最短距离 ────────────────
+        // 入口区与 {0,1,2} 相邻
+        int dist[12];
+        std::fill_n(dist, 12, -1);
+        {
+            // 手动 BFS (无 queue 依赖, 网格很小)
+            int queue[12], head = 0, tail = 0;
+            for (int e : {0, 1, 2})
+            {
+                if (passable[e])
+                {
+                    dist[e] = 1;
+                    queue[tail++] = e;
+                }
+            }
+            while (head < tail)
+            {
+                int cur = queue[head++];
+                for (int ni = 0; ni < 4; ++ni)
+                {
+                    int nb = ADJ[cur][ni];
+                    if (nb < 0) continue;
+                    if (dist[nb] < 0 && passable[nb])
+                    {
+                        dist[nb] = dist[cur] + 1;
+                        queue[tail++] = nb;
+                    }
+                }
+            }
+        }
+
+        // ── 4. 规则 4.4.15: 入口方块有 R2 KFS → 第一个从入口区取 ──
+        // 排序: 入口 R2 排最前, 其余按 BFS 距离升序
+        std::sort(r2_targets.begin(), r2_targets.end(),
+                  [&](int a, int b)
+                  {
+                      bool ae = is_entry_block(a), be = is_entry_block(b);
+                      if (ae != be) return ae > be;   // 入口方块优先
+                      if (dist[a] != dist[b])
+                          return dist[a] < dist[b];   // 距离近的优先
+                      return a < b;                    // 同距离按索引
+                  });
+
+        // ── 5. 检查不可达方块 ────────────────────────────────
+        for (int t : r2_targets)
+        {
+            if (dist[t] < 0)
+                RCLCPP_WARN(get_logger(),
+                            "buildZone2Route: R2 block %d is UNREACHABLE (no passable path from entry)!",
+                            t);
+        }
+
+        // ── 6. 贪心生成访问顺序 (保证相邻性) ─────────────────
+        // current_pos = -1 表示入口区 (与 {0,1,2} 相邻)
+        int current_pos = -1;
+        std::vector<int> plan;
+
+        for (int target : r2_targets)
+        {
+            if (dist[target] < 0)
+                continue;   // 不可达, 跳过
+
+            // 找到从 current_pos 到 target 的路径上的第一个中间方块
+            // (BFS 路径反推, 简单场景下直接取 target 的 BFS 前驱)
+            int step = findFirstStep(current_pos, target, passable);
+            if (step >= 0 && step != target && !isAlreadyPlanned(plan, step))
+            {
+                // 此中间方块是 R2 站立取 KFS 的位置
+                plan.push_back(step);
+            }
+            plan.push_back(target);
+            passable[target] = true;   // KFS 取走后该方块变为完全可通过
+            current_pos = target;
+        }
+
+        // ── 7. 检查出口可达性 (4.4.19) ───────────────────────
+        {
+            bool exit_reachable = false;
+            if (current_pos < 0)
+            {
+                // 还在入口区 — 只有入口方块有 KFS 且已取完的情况
+                exit_reachable = true;  // 从入口区可直接到出口方块
+            }
+            else
+            {
+                for (int ex : {9, 10, 11})
+                    if (passable[ex] && isAdjacent(current_pos, ex))
+                        exit_reachable = true;
+                // 放宽: 只要出口方块可通过即可 (相邻约束由最后一次移动满足)
+                for (int ex : {9, 10, 11})
+                    if (passable[ex])
+                        exit_reachable = true;
+            }
+            if (!exit_reachable)
+                RCLCPP_WARN(get_logger(),
+                            "buildZone2Route: NO passable exit! (4.4.19 may be violated)");
+        }
+
+        // ── 8. 生成 Zone2Task 列表 ────────────────────────────
+        for (int idx : plan)
+        {
+            Zone2Task t;
+            t.id = idx;
+            t.x = zone2_blocks_[idx].x;
+            t.y = zone2_blocks_[idx].y;
+            t.spin_rad = zone2_blocks_[idx].spin_rad;
+            t.grab_scene = zone2_blocks_[idx].grab_scene;
+            t.arm_command = sceneToArmCmd(t.grab_scene);
+            zone2_tasks_.push_back(t);
+        }
+
+        // ── 9. 规则 4.4.16 检查 ───────────────────────────────
+        if (zone2_tasks_.empty())
+        {
+            RCLCPP_WARN(get_logger(),
+                        "buildZone2Route: 0 tasks planned! R2 has no KFS to carry out of forest. "
+                        "(4.4.16: must carry >=1 R2 KFS when leaving)");
+        }
+
+        // ── dump ──────────────────────────────────────────────
+        RCLCPP_INFO(get_logger(),
+                    "buildZone2Route: %zu tasks (entry->exit, adjacency-respecting):",
+                    zone2_tasks_.size());
+        int task_idx = 0;
+        for (const auto &t : zone2_tasks_)
+        {
+            const char *pos = is_entry_block(t.id) ? "[ENTRY]"
+                            : is_exit_block(t.id) ? "[EXIT]"
+                            : "";
+            RCLCPP_INFO(get_logger(), "  #%d block %d %s (%.2f,%.2f) scene=%d cmd=%d",
+                        task_idx++, t.id, pos, t.x, t.y, t.grab_scene, t.arm_command);
+        }
+    }
+
+    // ── 规划辅助函数 ────────────────────────────────────────────
+
+    // 从入口区(-1)或方块 pos 出发, 找到去 target 路径上的第一个非 target 方块
+    // 用于确定 R2 站立位置 (从相邻方块伸手拿 KFS, 符合 8.9)
+    static int findFirstStep(int pos, int target, const bool passable[12])
+    {
+        // 入口区: target 是入口方块时, step = -1 (从入口区直接拿)
+        if (pos < 0 && is_entry_block(target))
+            return -1;   // 从入口区直接伸手
+
+        // BFS 反推: 从 target 往回找, 直到碰到 pos
+        int prev[12];
+        std::fill_n(prev, 12, -2);
+        int queue[12], head = 0, tail = 0;
+
+        if (pos >= 0)
+        {
+            prev[pos] = -1;
+            queue[tail++] = pos;
+        }
+        else
+        {
+            for (int e : {0, 1, 2})
+            {
+                if (passable[e])
+                {
+                    prev[e] = -1;
+                    queue[tail++] = e;
+                }
+            }
+        }
+
+        bool found = false;
+        while (head < tail)
+        {
+            int cur = queue[head++];
+            if (cur == target) { found = true; break; }
+            for (int ni = 0; ni < 4; ++ni)
+            {
+                int nb = ADJ[cur][ni];
+                if (nb < 0 || prev[nb] >= -1 || !passable[nb]) continue;
+                prev[nb] = cur;
+                queue[tail++] = nb;
+            }
+        }
+
+        if (!found) return target;   // 直接给 target
+
+        // 沿 prev 链回退, 找到 target 的前驱
+        int step = target;
+        while (prev[step] >= 0)
+            step = prev[step];
+
+        return step;   // 从 pos 出发的第一步
+    }
+
+    static bool isAdjacent(int a, int b)
+    {
+        if (b < 0) return is_entry_block(a);
+        for (int ni = 0; ni < 4; ++ni)
+            if (ADJ[a][ni] == b) return true;
+        return false;
+    }
+
+    static bool isAlreadyPlanned(const std::vector<int> &plan, int idx)
+    {
+        for (int p : plan)
+            if (p == idx) return true;
+        return false;
+    }
+
+    static uint8_t sceneToArmCmd(uint8_t scene)
+    {
+        switch (scene)
+        {
+        case 1:  return r2_interfaces::msg::ArmCommand::GRAB_SCENE_1;
+        case 2:  return r2_interfaces::msg::ArmCommand::GRAB_SCENE_2;
+        case 3:  return r2_interfaces::msg::ArmCommand::GRAB_SCENE_3;
+        default: return r2_interfaces::msg::ArmCommand::GRIPPER_GRAB;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 导航 action 封装
+    // ═════════════════════════════════════════════════════════════
 
     template <typename ActionT>
     bool waitActionServer(
@@ -307,24 +935,16 @@ private:
         const std::string &action_name)
     {
         if (client->wait_for_action_server(1s))
-        {
             return true;
-        }
-
         RCLCPP_WARN(get_logger(), "Action server not available: %s", action_name.c_str());
         return false;
     }
 
-    void sendNavigateAndSpin(
-        double x,
-        double y,
-        double spin_rad,
-        const CompletionCb &on_done)
+    void sendNavigateAndSpin(double x, double y, double spin_rad,
+                             const CompletionCb &on_done)
     {
         nav_chain_in_progress_ = true;
-        sendNavigateGoal(
-            x,
-            y,
+        sendNavigateGoal(x, y,
             [this, spin_rad, on_done](bool nav_ok)
             {
                 if (!nav_ok)
@@ -333,9 +953,7 @@ private:
                     on_done(false);
                     return;
                 }
-
-                sendSpinGoal(
-                    spin_rad,
+                sendSpinGoal(spin_rad,
                     [this, on_done](bool spin_ok)
                     {
                         nav_chain_in_progress_ = false;
@@ -344,10 +962,7 @@ private:
             });
     }
 
-    void sendNavigateGoal(
-        double x,
-        double y,
-        const CompletionCb &on_done)
+    void sendNavigateGoal(double x, double y, const CompletionCb &on_done)
     {
         if (!waitActionServer<NavigateToPose>(nav_to_pose_client_, "navigate_to_pose"))
         {
@@ -366,40 +981,23 @@ private:
         goal.pose.pose.orientation.z = 0.0;
         goal.pose.pose.orientation.w = 1.0;
 
-        RCLCPP_INFO(get_logger(), "Send NavigateToPose goal: x=%.2f y=%.2f", x, y);
+        RCLCPP_INFO(get_logger(), "NAV→ (%.2f, %.2f)", x, y);
 
         auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
-        options.goal_response_callback = [this](std::shared_ptr<GoalHandleNavigateToPose> goal_handle)
+        options.goal_response_callback = [this](std::shared_ptr<GoalHandleNavigateToPose> gh)
         {
-            if (!goal_handle)
-            {
-                RCLCPP_WARN(get_logger(), "NavigateToPose goal rejected");
-            }
-            else
-            {
-                RCLCPP_INFO(get_logger(), "NavigateToPose goal accepted");
-            }
+            RCLCPP_INFO(get_logger(), "NavigateToPose %s", gh ? "ACCEPTED" : "REJECTED");
         };
-
-        options.result_callback = [this, on_done](const GoalHandleNavigateToPose::WrappedResult &result)
+        options.result_callback = [this, on_done](const GoalHandleNavigateToPose::WrappedResult &r)
         {
-            if (result.code == rclcpp_action::ResultCode::SUCCEEDED)
-            {
-                RCLCPP_INFO(get_logger(), "NavigateToPose finished successfully");
-                on_done(true);
-                return;
-            }
-
-            RCLCPP_WARN(get_logger(), "NavigateToPose finished with code: %d", static_cast<int>(result.code));
-            on_done(false);
+            bool ok = (r.code == rclcpp_action::ResultCode::SUCCEEDED);
+            RCLCPP_INFO(get_logger(), "NAV done: %s", ok ? "OK" : "FAIL");
+            on_done(ok);
         };
-
         nav_to_pose_client_->async_send_goal(goal, options);
     }
 
-    void sendSpinGoal(
-        double spin_rad,
-        const CompletionCb &on_done)
+    void sendSpinGoal(double spin_rad, const CompletionCb &on_done)
     {
         if (std::fabs(spin_rad) < 1e-4)
         {
@@ -416,36 +1014,25 @@ private:
         Spin::Goal goal;
         goal.target_yaw = spin_rad;
 
-        RCLCPP_INFO(get_logger(), "Send Spin goal: yaw=%.3f rad", spin_rad);
+        RCLCPP_INFO(get_logger(), "SPIN→ %.3f rad", spin_rad);
 
         auto options = rclcpp_action::Client<Spin>::SendGoalOptions();
-        options.goal_response_callback = [this](std::shared_ptr<GoalHandleSpin> goal_handle)
+        options.goal_response_callback = [this](std::shared_ptr<GoalHandleSpin> gh)
         {
-            if (!goal_handle)
-            {
-                RCLCPP_WARN(get_logger(), "Spin goal rejected");
-            }
-            else
-            {
-                RCLCPP_INFO(get_logger(), "Spin goal accepted");
-            }
+            RCLCPP_INFO(get_logger(), "Spin %s", gh ? "ACCEPTED" : "REJECTED");
         };
-
-        options.result_callback = [this, on_done](const GoalHandleSpin::WrappedResult &result)
+        options.result_callback = [this, on_done](const GoalHandleSpin::WrappedResult &r)
         {
-            if (result.code == rclcpp_action::ResultCode::SUCCEEDED)
-            {
-                RCLCPP_INFO(get_logger(), "Spin finished successfully");
-                on_done(true);
-                return;
-            }
-
-            RCLCPP_WARN(get_logger(), "Spin finished with code: %d", static_cast<int>(result.code));
-            on_done(false);
+            bool ok = (r.code == rclcpp_action::ResultCode::SUCCEEDED);
+            RCLCPP_INFO(get_logger(), "SPIN done: %s", ok ? "OK" : "FAIL");
+            on_done(ok);
         };
-
         spin_client_->async_send_goal(goal, options);
     }
+
+    // ═════════════════════════════════════════════════════════════
+    // 上位机↔下位机 可靠指令
+    // ═════════════════════════════════════════════════════════════
 
     void startReliableUpperCommand(uint8_t cmd)
     {
@@ -457,7 +1044,7 @@ private:
         last_upper_send_time_ = now_time;
 
         publishUpperCommand(cmd);
-        RCLCPP_INFO(get_logger(), "Start reliable upper command: %d", cmd);
+        RCLCPP_INFO(get_logger(), "ARM→ cmd=%d (等待ACK...)", cmd);
     }
 
     void handleUpperCommandReliability()
@@ -471,12 +1058,9 @@ private:
                 publishUpperCommand(pending_upper_cmd_);
                 last_upper_send_time_ = now_time;
             }
-
             if ((now_time - upper_cmd_start_time_).nanoseconds() >= kUpperCommandTimeoutMs * 1000000)
             {
-                RCLCPP_WARN(get_logger(),
-                            "Upper command %d ACK timeout, keep resending",
-                            pending_upper_cmd_);
+                RCLCPP_WARN(get_logger(), "ARM cmd %d ACK timeout, resending...", pending_upper_cmd_);
                 upper_cmd_start_time_ = now_time;
             }
             return;
@@ -489,48 +1073,79 @@ private:
         }
     }
 
-    void publishSpearEnable(bool enable)
-    {
-        if (spear_camera_enabled_ == enable)
-        {
-            return;
-        }
-
-        std_msgs::msg::Bool msg;
-        msg.data = enable;
-        spear_enable_pub_->publish(msg);
-
-        spear_camera_enabled_ = enable;
-        RCLCPP_INFO(get_logger(), "spearhead camera %s", enable ? "enabled" : "disabled");
-    }
-
-    void onUpperAck(const r2_interfaces::msg::ArmAck::SharedPtr msg)
-    {
-        if (!msg->received || !waiting_upper_ack_)
-        {
-            return;
-        }
-
-        if (msg->command != pending_upper_cmd_)
-        {
-            RCLCPP_WARN(get_logger(),
-                        "Ignore ACK for command %d, waiting command is %d",
-                        msg->command,
-                        pending_upper_cmd_);
-            return;
-        }
-
-        waiting_upper_ack_ = false;
-        last_idle_heartbeat_time_ = now();
-        RCLCPP_INFO(get_logger(), "ACK received for upper command: %d", msg->command);
-    }
-
     void publishUpperCommand(uint8_t cmd)
     {
         r2_interfaces::msg::ArmCommand msg;
         msg.command = cmd;
         upper_cmd_pub_->publish(msg);
-        RCLCPP_INFO(get_logger(), "Upper body command: %d", cmd);
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 各类 topic 回调
+    // ═════════════════════════════════════════════════════════════
+
+    void onUpperAck(const r2_interfaces::msg::ArmAck::SharedPtr msg)
+    {
+        if (!msg->received || !waiting_upper_ack_)
+            return;
+        if (msg->command != pending_upper_cmd_)
+        {
+            RCLCPP_WARN(get_logger(), "Ignore ACK for cmd %d, waiting %d",
+                        msg->command, pending_upper_cmd_);
+            return;
+        }
+        waiting_upper_ack_ = false;
+        last_idle_heartbeat_time_ = now();
+        RCLCPP_INFO(get_logger(), "ARM ACK received: cmd=%d", msg->command);
+    }
+
+    void onUpperDone(const r2_interfaces::msg::ArmDone::SharedPtr msg)
+    {
+        if (!msg->done)
+            return;
+
+        waiting_upper_ack_ = false;
+        RCLCPP_INFO(get_logger(), "ARM DONE: cmd=%d success=%d", msg->command, msg->success);
+
+        // Zone1 抓取完成 → 去对接
+        if (state_ == State::ZONE1_OPERATE_POINT && msg->command == zone1_arm_command_)
+        {
+            if (!msg->success && zone1_arm_retry_count_ < kZone1ArmMaxRetry)
+            {
+                ++zone1_arm_retry_count_;
+                RCLCPP_WARN(get_logger(), "Zone1 arm retry %d/%d",
+                            zone1_arm_retry_count_, kZone1ArmMaxRetry);
+                startReliableUpperCommand(zone1_arm_command_);
+                return;
+            }
+            if (!msg->success)
+                RCLCPP_WARN(get_logger(), "Zone1 arm failed after retry, still try dock");
+
+            zone1_arm_retry_count_ = 0;
+            transitionTo(State::ZONE1_DOCK_R1);
+            return;
+        }
+
+        // Zone2 抓取完成
+        if (state_ == State::ZONE2_GRAB)
+        {
+            if (!msg->success && zone2_arm_retry_count_ < kZone2ArmMaxRetry)
+            {
+                ++zone2_arm_retry_count_;
+                const auto &task = zone2_tasks_[current_zone2_index_];
+                RCLCPP_WARN(get_logger(), "Zone2 arm retry %d/%d",
+                            zone2_arm_retry_count_, kZone2ArmMaxRetry);
+                startReliableUpperCommand(task.arm_command);
+                return;
+            }
+            if (!msg->success)
+                RCLCPP_WARN(get_logger(), "Zone2 arm failed after retry, skip");
+
+            zone2_arm_retry_count_ = 0;
+            ++current_zone2_index_;
+            transitionTo(State::ZONE2_NAV_POINT);
+            return;
+        }
     }
 
     void onSpearExists(const std_msgs::msg::Bool::SharedPtr msg)
@@ -538,101 +1153,118 @@ private:
         spearhead_exists_ = msg->data;
     }
 
+    void onLightboardMap(const std_msgs::msg::UInt8MultiArray::SharedPtr msg)
+    {
+        lightboard_map_.assign(msg->data.begin(), msg->data.end());
+        lightboard_map_received_ = true;
+    }
+
+    void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg)
+    {
+        grab_scene_ready_ = msg->data;
+        if (msg->data && state_ == State::ZONE2_WAIT_SCENE_CONFIRM)
+        {
+            RCLCPP_INFO(get_logger(), "Scene CONFIRMED!");
+            transitionTo(State::ZONE2_GRAB);
+        }
+    }
+
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg)
     {
         const auto now_time = now();
         if (msg->data == last_button_state_ &&
             (now_time - last_button_event_time_).nanoseconds() < kButtonDebounceMs * 1000000)
-        {
             return;
-        }
 
         last_button_state_ = msg->data;
         last_button_event_time_ = now_time;
         const auto button = static_cast<ButtonState>(msg->data);
 
-        if (button == ButtonState::START)
-        {
-            pending_start_ = true;
-            return;
-        }
-
-        if (button == ButtonState::ZONE1_RETRY)
-        {
-            pending_zone1_retry_ = true;
-            return;
-        }
-
-        if (button == ButtonState::ZONE2_RETRY)
-        {
-            pending_zone2_retry_ = true;
-            return;
-        }
-
-        if (button == ButtonState::ZONE3_RETRY)
-        {
-            pending_zone3_retry_ = true;
-        }
+        if (button == ButtonState::START)       { pending_start_ = true; }
+        if (button == ButtonState::ZONE1_RETRY) { pending_zone1_retry_ = true; }
+        if (button == ButtonState::ZONE2_RETRY) { pending_zone2_retry_ = true; }
+        if (button == ButtonState::ZONE3_RETRY) { pending_zone3_retry_ = true; }
     }
 
-    void onUpperDone(const r2_interfaces::msg::ArmDone::SharedPtr msg)
+    // ═════════════════════════════════════════════════════════════
+    // sensor 开关
+    // ═════════════════════════════════════════════════════════════
+
+    void publishSpearEnable(bool enable)
     {
-        if (!msg->done)
-        {
-            return;
-        }
-
-        if (state_ != State::ZONE1_OPERATE_POINT)
-        {
-            return;
-        }
-
-        if (msg->command != zone1_arm_command_)
-        {
-            return;
-        }
-
-        waiting_upper_ack_ = false;
-
-        if (!msg->success)
-        {
-            if (zone1_arm_retry_count_ < kZone1ArmMaxRetry)
-            {
-                ++zone1_arm_retry_count_;
-                RCLCPP_WARN(get_logger(), "Zone1 arm failed, retry %d/%d", zone1_arm_retry_count_, kZone1ArmMaxRetry);
-                startReliableUpperCommand(zone1_arm_command_);
-                return;
-            }
-
-            RCLCPP_WARN(get_logger(), "Zone1 arm failed after retry, skip point");
-        }
-
-        zone1_arm_retry_count_ = 0;
-        ++current_zone1_index_;
-        transitionTo(State::ZONE1_NAV_POINT);
+        if (spear_camera_enabled_ == enable) return;
+        std_msgs::msg::Bool msg;
+        msg.data = enable;
+        spear_enable_pub_->publish(msg);
+        spear_camera_enabled_ = enable;
+        RCLCPP_INFO(get_logger(), "spearhead camera %s", enable ? "ON" : "OFF");
     }
+
+    void publishLightboardEnable(bool enable)
+    {
+        if (lightboard_enabled_ == enable) return;
+        std_msgs::msg::Bool msg;
+        msg.data = enable;
+        lightboard_enable_pub_->publish(msg);
+        lightboard_enabled_ = enable;
+        RCLCPP_INFO(get_logger(), "lightboard camera %s", enable ? "ON" : "OFF");
+    }
+
+    void publishGrabSceneEnable(bool enable)
+    {
+        if (grab_scene_enabled_ == enable) return;
+        std_msgs::msg::Bool msg;
+        msg.data = enable;
+        grab_scene_enable_pub_->publish(msg);
+        grab_scene_enabled_ = enable;
+        RCLCPP_INFO(get_logger(), "grab_scene %s", enable ? "ON" : "OFF");
+    }
+
+    void publishGrabSceneExpected(uint8_t scene)
+    {
+        std_msgs::msg::UInt8 msg;
+        msg.data = scene;
+        grab_scene_expected_pub_->publish(msg);
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 常量 & 参数
+    // ═════════════════════════════════════════════════════════════
 
     static constexpr int64_t kUpperCommandResendPeriodMs = 100;
     static constexpr int64_t kIdleHeartbeatPeriodMs = 500;
     static constexpr int64_t kUpperCommandTimeoutMs = 1200;
     static constexpr int64_t kButtonDebounceMs = 120;
     static constexpr int kZone1ArmMaxRetry = 1;
+    static constexpr int kZone2ArmMaxRetry = 1;
+    static constexpr int kMaxDocks = 3;
 
+    // ── 状态 ────────────────────────────────────────────────────
     State state_{State::INIT};
 
+    // ── publishers ──────────────────────────────────────────────
     rclcpp::Publisher<r2_interfaces::msg::ArmCommand>::SharedPtr upper_cmd_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr spear_enable_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lightboard_enable_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr grab_scene_enable_pub_;
+    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr grab_scene_expected_pub_;
 
+    // ── subscriptions ───────────────────────────────────────────
     rclcpp::Subscription<r2_interfaces::msg::ArmAck>::SharedPtr upper_ack_sub_;
     rclcpp::Subscription<r2_interfaces::msg::ArmDone>::SharedPtr upper_done_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr spear_exists_sub_;
+    rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr button_state_sub_;
 
+    // ── action clients ──────────────────────────────────────────
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_to_pose_client_;
     rclcpp_action::Client<Spin>::SharedPtr spin_client_;
 
+    // ── timer ───────────────────────────────────────────────────
     rclcpp::TimerBase::SharedPtr timer_;
 
+    // ── 参数值 ──────────────────────────────────────────────────
     std::string nav_frame_id_{"map"};
     uint8_t zone1_arm_command_{r2_interfaces::msg::ArmCommand::GRIPPER_GRAB};
 
@@ -640,14 +1272,45 @@ private:
     std::vector<int> zone1_route_ids_;
     std::size_t current_zone1_index_{0};
 
-    double mf_exit_x_{3.2};
-    double mf_exit_y_{0.0};
-    double mf_exit_spin_rad_{0.0};
+    double dock_r1_x_{0.0}, dock_r1_y_{0.0}, dock_r1_spin_{0.0};
+    double dock_timeout_s_{15.0};
+    double zone1_max_time_s_{120.0};
+    double scene_confirm_timeout_s_{5.0};
+
+    Zone2BlockInfo zone2_blocks_[12];
+    std::vector<Zone2Task> zone2_tasks_;
+    std::size_t current_zone2_index_{0};
+    int zone2_arm_retry_count_{0};
+
+    double mf_exit_x_{3.2}, mf_exit_y_{0.0}, mf_exit_spin_rad_{0.0};
+
+    // ── 状态标志 ────────────────────────────────────────────────
+    bool sim_mode_{false};
 
     bool spearhead_exists_{false};
     bool spear_camera_enabled_{false};
+
+    bool lightboard_enabled_{false};
+    std::vector<uint8_t> lightboard_map_;
+    std::vector<uint8_t> latest_lightboard_map_;
+    bool lightboard_map_received_{false};
+
+    bool grab_scene_enabled_{false};
+    bool grab_scene_ready_{false};
+
     bool nav_chain_in_progress_{false};
 
+    // Zone1 dock
+    bool dock_arrived_{false};
+    bool spearhead_was_present_{false};
+    int dock_success_count_{0};
+    rclcpp::Time dock_start_time_{0, 0, RCL_ROS_TIME};
+    rclcpp::Time zone1_start_time_{0, 0, RCL_ROS_TIME};
+
+    // Zone2 scene
+    rclcpp::Time scene_confirm_start_time_{0, 0, RCL_ROS_TIME};
+
+    // buttons
     bool pending_start_{false};
     bool pending_zone1_retry_{false};
     bool pending_zone2_retry_{false};
@@ -655,8 +1318,8 @@ private:
     uint8_t last_button_state_{static_cast<uint8_t>(ButtonState::NONE)};
     rclcpp::Time last_button_event_time_{0, 0, RCL_ROS_TIME};
 
+    // upper command reliability
     int zone1_arm_retry_count_{0};
-
     bool waiting_upper_ack_{false};
     uint8_t pending_upper_cmd_{r2_interfaces::msg::ArmCommand::IDLE};
     rclcpp::Time last_upper_send_time_{0, 0, RCL_ROS_TIME};
