@@ -18,8 +18,9 @@
 #include "std_msgs/msg/u_int8.hpp"
 #include "std_msgs/msg/u_int8_multi_array.hpp"
 
+#include "robot_serial/msg/juece.hpp"
+
 #include "r2_interfaces/msg/arm_ack.hpp"
-#include "r2_interfaces/msg/arm_command.hpp"
 #include "r2_interfaces/msg/arm_done.hpp"
 
 using std::placeholders::_1;
@@ -89,8 +90,8 @@ public:
     R2DecisionNode() : Node("r2_decision_node")
     {
         // ── publishers ──────────────────────────────────────────
-        upper_cmd_pub_ = create_publisher<r2_interfaces::msg::ArmCommand>(
-            "/r2/upper_body/command", 10);
+        upper_cmd_pub_ = create_publisher<robot_serial::msg::Juece>(
+            "/juece", 10);
 
         spear_enable_pub_ = create_publisher<std_msgs::msg::Bool>(
             "spearhead/enable", 10);
@@ -111,11 +112,11 @@ public:
 
         // ── subscriptions ───────────────────────────────────────
         upper_ack_sub_ = create_subscription<r2_interfaces::msg::ArmAck>(
-            "/r2/upper_body/ack", 10,
+            "/juece_ack", 10,
             std::bind(&R2DecisionNode::onUpperAck, this, _1));
 
         upper_done_sub_ = create_subscription<r2_interfaces::msg::ArmDone>(
-            "/r2/upper_body/done", 10,
+            "/juece_done", 10,
             std::bind(&R2DecisionNode::onUpperDone, this, _1));
 
         spear_exists_sub_ = create_subscription<std_msgs::msg::Bool>(
@@ -144,8 +145,7 @@ public:
 
         // Zone1 arm command
         zone1_arm_command_ = static_cast<uint8_t>(
-            this->declare_parameter<int>("zone1_arm_command",
-                                         r2_interfaces::msg::ArmCommand::IDLE));
+            this->declare_parameter<int>("zone1_arm_command", 0));
 
         // Zone1 矛头位置: 基准点 + (n-1)*间距 (6个矛头等距排列, 200mm)
         double spearhead_base_x   = this->declare_parameter<double>("spearhead_base_x", 0.0);
@@ -170,13 +170,13 @@ public:
                            this->declare_parameter<double>("zone1_point_2_x", 0.0),
                            this->declare_parameter<double>("zone1_point_2_y", 0.0),
                            this->declare_parameter<double>("zone1_point_2_spin", 0.0),
-                           r2_interfaces::msg::ArmCommand::UP_STAIRS,
+                           1,
                            true};   // 上台阶: 发1, 跳过对接
         point_table_[8] = {8,
                            this->declare_parameter<double>("zone1_point_3_x", 0.0),
                            this->declare_parameter<double>("zone1_point_3_y", 0.0),
                            this->declare_parameter<double>("zone1_point_3_spin", 0.0),
-                           r2_interfaces::msg::ArmCommand::DOWN_STAIRS,
+                           2,
                            true};  // 下台阶: 发2, 跳过对接
 
         // R1 对接位置
@@ -917,7 +917,7 @@ private:
     {
         // TODO: 抓取指令待硬件确定后映射
         (void)scene;
-        return r2_interfaces::msg::ArmCommand::IDLE;
+        return 0;
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -1030,9 +1030,9 @@ private:
     void startReliableUpperCommand(uint8_t cmd)
     {
         // 硬件要求: 先发 IDLE(0) 再发目标指令
-        if (cmd != r2_interfaces::msg::ArmCommand::IDLE)
+        if (cmd != 0)
         {
-            publishUpperCommand(r2_interfaces::msg::ArmCommand::IDLE);
+            publishUpperCommand(0);
         }
 
         pending_upper_cmd_ = cmd;
@@ -1067,15 +1067,17 @@ private:
 
         if ((now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1000000)
         {
-            publishUpperCommand(r2_interfaces::msg::ArmCommand::IDLE);
+            publishUpperCommand(0);
             last_idle_heartbeat_time_ = now_time;
         }
     }
 
     void publishUpperCommand(uint8_t cmd)
     {
-        r2_interfaces::msg::ArmCommand msg;
-        msg.command = cmd;
+        robot_serial::msg::Juece msg;
+        msg.zhuangtai = 0;
+        msg.is_finsh = 0;
+        msg.status_bit = cmd;
         upper_cmd_pub_->publish(msg);
     }
 
@@ -1255,7 +1257,7 @@ private:
     State state_{State::INIT};
 
     // ── publishers ──────────────────────────────────────────────
-    rclcpp::Publisher<r2_interfaces::msg::ArmCommand>::SharedPtr upper_cmd_pub_;
+    rclcpp::Publisher<robot_serial::msg::Juece>::SharedPtr upper_cmd_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr spear_enable_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lightboard_enable_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr grab_scene_enable_pub_;
@@ -1278,7 +1280,7 @@ private:
 
     // ── 参数值 ──────────────────────────────────────────────────
     std::string nav_frame_id_{"map"};
-    uint8_t zone1_arm_command_{r2_interfaces::msg::ArmCommand::IDLE};
+    uint8_t zone1_arm_command_{0};
 
     std::unordered_map<int, WaypointTask> point_table_;
     std::vector<int64_t> zone1_route_ids_;
@@ -1333,7 +1335,7 @@ private:
     // upper command reliability
     int zone1_arm_retry_count_{0};
     bool waiting_upper_ack_{false};
-    uint8_t pending_upper_cmd_{r2_interfaces::msg::ArmCommand::IDLE};
+    uint8_t pending_upper_cmd_{0};
     rclcpp::Time last_upper_send_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time upper_cmd_start_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_idle_heartbeat_time_{0, 0, RCL_ROS_TIME};
