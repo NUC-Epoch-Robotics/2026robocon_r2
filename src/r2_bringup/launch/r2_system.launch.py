@@ -46,7 +46,20 @@ def generate_launch_description():
             executable='r2_decision_node',
             name='r2_decision_node',
             output='screen',
-            parameters=[{'sim_mode': sim_mode}],
+            parameters=[{
+                'sim_mode': sim_mode,
+                # Zone1 三个测试坐标
+                'zone1_point_1_x': -0.352,
+                'zone1_point_1_y': -0.959,
+                'zone1_point_1_spin': -0.622,
+                'zone1_point_2_x': 1.7,
+                'zone1_point_2_y': 1.45,
+                'zone1_point_2_spin': -0.622,
+                'zone1_point_3_x': 1.9,
+                'zone1_point_3_y': 1.45,
+                'zone1_point_3_spin': -0.622,
+                'zone1_route': [1, 2, 3],
+            }],
         ),
 
         # ── Fake hardware (simulation / testing) ─────────────

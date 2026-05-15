@@ -171,7 +171,8 @@ public:
                            this->declare_parameter<double>("zone1_point_6_y", 0.0),
                            this->declare_parameter<double>("zone1_point_6_spin", 0.0)};
 
-        zone1_route_ids_ = {2, 1, 5, 4, 6, 3};
+        zone1_route_ids_ = this->declare_parameter<std::vector<int64_t>>(
+            "zone1_route", std::vector<int64_t>{2, 1, 5, 4, 6, 3});
 
         // R1 对接位置
         dock_r1_x_    = this->declare_parameter<double>("dock_r1_x",    0.0);
@@ -1269,7 +1270,7 @@ private:
     uint8_t zone1_arm_command_{r2_interfaces::msg::ArmCommand::GRIPPER_GRAB};
 
     std::unordered_map<int, WaypointTask> point_table_;
-    std::vector<int> zone1_route_ids_;
+    std::vector<int64_t> zone1_route_ids_;
     std::size_t current_zone1_index_{0};
 
     double dock_r1_x_{0.0}, dock_r1_y_{0.0}, dock_r1_spin_{0.0};
