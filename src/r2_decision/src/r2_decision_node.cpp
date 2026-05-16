@@ -42,6 +42,7 @@ enum class State
     ZONE1_DOWN_STAIRS,
     ZONE1_FINISH,
     ZONE2_NAV_POINT,
+    ZONE2_ROTATE,
     ZONE2_WAIT_SCENE_CONFIRM,
     ZONE2_GRAB,
     ZONE2_UP_STAIRS,
@@ -80,9 +81,14 @@ struct Zone2Task
     double qy{0.0};
     double qz{0.0};
     double qw{1.0};
+    bool use_rotate{false};
+    double rqx{0.0};
+    double rqy{0.0};
+    double rqz{0.0};
+    double rqw{1.0};
     uint8_t grab_scene;  // 1, 2, or 3
     uint8_t arm_command;
-    int8_t stair_cmd{0};  // 1=上, 2=下, 0=无 (相对下个点)
+    int8_t stair_cmd{0};  // 1=上, 2=下, 0=无
 };
 
 struct Zone2BlockInfo
@@ -102,6 +108,11 @@ struct Zone2FixedPoint
     double qy{0.0};
     double qz{0.0};
     double qw{1.0};
+    bool use_rotate{false};
+    double rqx{0.0};
+    double rqy{0.0};
+    double rqz{0.0};
+    double rqw{1.0};
 };
 
 class R2DecisionNode : public rclcpp::Node
@@ -250,6 +261,7 @@ public:
         for (int i = 0; i < 6; ++i)
         {
             char px[32], py[32], pyaw[32], pqx[32], pqy[32], pqz[32], pqw[32];
+            char rqx[32], rqy[32], rqz[32], rqw[32], ruse[32];
             snprintf(px, sizeof(px), "zone2_fixed_%d_x", i);
             snprintf(py, sizeof(py), "zone2_fixed_%d_y", i);
             snprintf(pyaw, sizeof(pyaw), "zone2_fixed_%d_yaw", i);
@@ -257,13 +269,23 @@ public:
             snprintf(pqy, sizeof(pqy), "zone2_fixed_%d_qy", i);
             snprintf(pqz, sizeof(pqz), "zone2_fixed_%d_qz", i);
             snprintf(pqw, sizeof(pqw), "zone2_fixed_%d_qw", i);
-            zone2_fixed_[i].x  = this->declare_parameter<double>(px, 0.0);
-            zone2_fixed_[i].y  = this->declare_parameter<double>(py, 0.0);
+            snprintf(ruse, sizeof(ruse), "zone2_fixed_%d_use_rotate", i);
+            snprintf(rqx, sizeof(rqx), "zone2_fixed_%d_rqx", i);
+            snprintf(rqy, sizeof(rqy), "zone2_fixed_%d_rqy", i);
+            snprintf(rqz, sizeof(rqz), "zone2_fixed_%d_rqz", i);
+            snprintf(rqw, sizeof(rqw), "zone2_fixed_%d_rqw", i);
+            zone2_fixed_[i].x   = this->declare_parameter<double>(px, 0.0);
+            zone2_fixed_[i].y   = this->declare_parameter<double>(py, 0.0);
             zone2_fixed_[i].yaw = this->declare_parameter<double>(pyaw, 0.0);
-            zone2_fixed_[i].qx = this->declare_parameter<double>(pqx, 0.0);
-            zone2_fixed_[i].qy = this->declare_parameter<double>(pqy, 0.0);
-            zone2_fixed_[i].qz = this->declare_parameter<double>(pqz, 0.0);
-            zone2_fixed_[i].qw = this->declare_parameter<double>(pqw, 1.0);
+            zone2_fixed_[i].qx  = this->declare_parameter<double>(pqx, 0.0);
+            zone2_fixed_[i].qy  = this->declare_parameter<double>(pqy, 0.0);
+            zone2_fixed_[i].qz  = this->declare_parameter<double>(pqz, 0.0);
+            zone2_fixed_[i].qw  = this->declare_parameter<double>(pqw, 1.0);
+            zone2_fixed_[i].use_rotate = this->declare_parameter<bool>(ruse, false);
+            zone2_fixed_[i].rqx = this->declare_parameter<double>(rqx, 0.0);
+            zone2_fixed_[i].rqy = this->declare_parameter<double>(rqy, 0.0);
+            zone2_fixed_[i].rqz = this->declare_parameter<double>(rqz, 0.0);
+            zone2_fixed_[i].rqw = this->declare_parameter<double>(rqw, 1.0);
         }
 
         // ── 模拟模式: 无真实硬件时打印决策输出 ──
@@ -638,7 +660,40 @@ private:
                     }
                     if (state_ != State::ZONE2_NAV_POINT)
                         return;
-                    // 固定路线: 按台阶方向跳转
+                    if (use_fixed_zone2_route_)
+                    {
+                        if (task.use_rotate)
+                            transitionTo(State::ZONE2_ROTATE);
+                        else if (task.stair_cmd == 1)
+                            transitionTo(State::ZONE2_UP_STAIRS);
+                        else if (task.stair_cmd == 2)
+                            transitionTo(State::ZONE2_DOWN_STAIRS);
+                        else
+                            transitionTo(State::ZONE2_FINISH);
+                    }
+                    else
+                    {
+                        transitionTo(State::ZONE2_WAIT_SCENE_CONFIRM);
+                    }
+                });
+            return;
+        }
+
+        // ── Zone2 原地转向 ──────────────────────────────────────────
+        if (state_ == State::ZONE2_ROTATE)
+        {
+            const auto &task = zone2_tasks_[current_zone2_index_];
+            RCLCPP_INFO(get_logger(), "Zone2: ROTATE @ (%.2f,%.2f) q=(%.3f,%.3f,%.3f,%.3f)",
+                        task.x, task.y, task.rqx, task.rqy, task.rqz, task.rqw);
+
+            sendNavigateWithQuat(
+                task.x, task.y, task.rqx, task.rqy, task.rqz, task.rqw,
+                [this, task](bool success)
+                {
+                    if (!success)
+                        RCLCPP_WARN(get_logger(), "Zone2: rotate nav failed");
+                    if (state_ != State::ZONE2_ROTATE)
+                        return;
                     if (task.stair_cmd == 1)
                         transitionTo(State::ZONE2_UP_STAIRS);
                     else if (task.stair_cmd == 2)
@@ -789,6 +844,11 @@ private:
             t.qy = zone2_fixed_[i].qy;
             t.qz = zone2_fixed_[i].qz;
             t.qw = zone2_fixed_[i].qw;
+            t.use_rotate = zone2_fixed_[i].use_rotate;
+            t.rqx = zone2_fixed_[i].rqx;
+            t.rqy = zone2_fixed_[i].rqy;
+            t.rqz = zone2_fixed_[i].rqz;
+            t.rqw = zone2_fixed_[i].rqw;
             t.grab_scene = 0;
             t.arm_command = 0;
 
@@ -955,7 +1015,7 @@ private:
             t.id = idx;
             t.x = zone2_blocks_[idx].x;
             t.y = zone2_blocks_[idx].y;
-            t.spin_rad = zone2_blocks_[idx].spin_rad;
+            t.yaw = zone2_blocks_[idx].spin_rad;
             t.grab_scene = zone2_blocks_[idx].grab_scene;
             t.arm_command = sceneToArmCmd(t.grab_scene);
             zone2_tasks_.push_back(t);
