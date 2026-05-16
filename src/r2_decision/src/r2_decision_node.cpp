@@ -44,6 +44,8 @@ enum class State
     ZONE2_NAV_POINT,
     ZONE2_WAIT_SCENE_CONFIRM,
     ZONE2_GRAB,
+    ZONE2_UP_STAIRS,
+    ZONE2_DOWN_STAIRS,
     ZONE2_FINISH,
     GO_TO_MF_EXIT,
     DONE
@@ -73,9 +75,14 @@ struct Zone2Task
     int id;
     double x;
     double y;
-    double spin_rad;
+    double yaw;
+    double qx{0.0};
+    double qy{0.0};
+    double qz{0.0};
+    double qw{1.0};
     uint8_t grab_scene;  // 1, 2, or 3
     uint8_t arm_command;
+    int8_t stair_cmd{0};  // 1=上, 2=下, 0=无 (相对下个点)
 };
 
 struct Zone2BlockInfo
@@ -84,6 +91,17 @@ struct Zone2BlockInfo
     double y;
     double spin_rad;
     uint8_t grab_scene;  // 1/2/3, 硬编码
+};
+
+struct Zone2FixedPoint
+{
+    double x;
+    double y;
+    double yaw;
+    double qx{0.0};
+    double qy{0.0};
+    double qz{0.0};
+    double qw{1.0};
 };
 
 class R2DecisionNode : public rclcpp::Node
@@ -226,6 +244,27 @@ public:
         mf_exit_x_        = this->declare_parameter<double>("mf_exit_x", 3.2);
         mf_exit_y_        = this->declare_parameter<double>("mf_exit_y", 0.0);
         mf_exit_spin_rad_ = this->declare_parameter<double>("mf_exit_spin_rad", 0.0);
+
+        // Zone2 固定路线 (6点, 硬编码台阶)
+        use_fixed_zone2_route_ = this->declare_parameter<bool>("use_fixed_zone2_route", true);
+        for (int i = 0; i < 6; ++i)
+        {
+            char px[32], py[32], pyaw[32], pqx[32], pqy[32], pqz[32], pqw[32];
+            snprintf(px, sizeof(px), "zone2_fixed_%d_x", i);
+            snprintf(py, sizeof(py), "zone2_fixed_%d_y", i);
+            snprintf(pyaw, sizeof(pyaw), "zone2_fixed_%d_yaw", i);
+            snprintf(pqx, sizeof(pqx), "zone2_fixed_%d_qx", i);
+            snprintf(pqy, sizeof(pqy), "zone2_fixed_%d_qy", i);
+            snprintf(pqz, sizeof(pqz), "zone2_fixed_%d_qz", i);
+            snprintf(pqw, sizeof(pqw), "zone2_fixed_%d_qw", i);
+            zone2_fixed_[i].x  = this->declare_parameter<double>(px, 0.0);
+            zone2_fixed_[i].y  = this->declare_parameter<double>(py, 0.0);
+            zone2_fixed_[i].yaw = this->declare_parameter<double>(pyaw, 0.0);
+            zone2_fixed_[i].qx = this->declare_parameter<double>(pqx, 0.0);
+            zone2_fixed_[i].qy = this->declare_parameter<double>(pqy, 0.0);
+            zone2_fixed_[i].qz = this->declare_parameter<double>(pqz, 0.0);
+            zone2_fixed_[i].qw = this->declare_parameter<double>(pqw, 1.0);
+        }
 
         // ── 模拟模式: 无真实硬件时打印决策输出 ──
         sim_mode_ = this->declare_parameter<bool>("sim_mode", false);
@@ -536,16 +575,16 @@ private:
         {
             publishSpearEnable(false);
             publishLightboardEnable(false);
-            RCLCPP_INFO(get_logger(), "Zone1: UP_STAIRS, arm cmd=1");
-            startReliableUpperCommand(1);
+            RCLCPP_INFO(get_logger(), "Zone1: UP_STAIRS — 10Hz publish status_bit 0→1");
+            startStairPublishing(1);
             return;
         }
 
         // ── 下台阶 ──────────────────────────────────────────────
         if (state_ == State::ZONE1_DOWN_STAIRS)
         {
-            RCLCPP_INFO(get_logger(), "Zone1: DOWN_STAIRS, arm cmd=2");
-            startReliableUpperCommand(2);
+            RCLCPP_INFO(get_logger(), "Zone1: DOWN_STAIRS — 10Hz publish status_bit 0→2");
+            startStairPublishing(2);
             return;
         }
 
@@ -554,7 +593,10 @@ private:
         {
             publishSpearEnable(false);
             publishLightboardEnable(false);
-            buildZone2Route(latest_lightboard_map_);
+            if (use_fixed_zone2_route_)
+                buildZone2FixedRoute();
+            else
+                buildZone2Route(latest_lightboard_map_);
             current_zone2_index_ = 0;
 
             if (zone2_tasks_.empty())
@@ -580,12 +622,12 @@ private:
             }
 
             const auto &task = zone2_tasks_[current_zone2_index_];
-            RCLCPP_INFO(get_logger(), "Zone2: nav → block %d (%.2f,%.2f) scene=%d",
-                        task.id, task.x, task.y, task.grab_scene);
+            RCLCPP_INFO(get_logger(), "Zone2: nav → point %d (%.2f,%.2f) yaw=%.3f stair=%d",
+                        task.id, task.x, task.y, task.yaw, task.stair_cmd);
 
-            sendNavigateAndSpin(
-                task.x, task.y, task.spin_rad,
-                [this](bool success)
+            sendNavigateWithQuat(
+                task.x, task.y, task.qx, task.qy, task.qz, task.qw,
+                [this, task](bool success)
                 {
                     if (!success)
                     {
@@ -594,9 +636,32 @@ private:
                         transitionTo(State::ZONE2_NAV_POINT);
                         return;
                     }
-                    if (state_ == State::ZONE2_NAV_POINT)
-                        transitionTo(State::ZONE2_WAIT_SCENE_CONFIRM);
+                    if (state_ != State::ZONE2_NAV_POINT)
+                        return;
+                    // 固定路线: 按台阶方向跳转
+                    if (task.stair_cmd == 1)
+                        transitionTo(State::ZONE2_UP_STAIRS);
+                    else if (task.stair_cmd == 2)
+                        transitionTo(State::ZONE2_DOWN_STAIRS);
+                    else
+                        transitionTo(State::ZONE2_FINISH);
                 });
+            return;
+        }
+
+        // ── Zone2 上台阶 ──────────────────────────────────────────
+        if (state_ == State::ZONE2_UP_STAIRS)
+        {
+            RCLCPP_INFO(get_logger(), "Zone2: UP_STAIRS — 10Hz cmd=1");
+            startStairPublishing(1);
+            return;
+        }
+
+        // ── Zone2 下台阶 ──────────────────────────────────────────
+        if (state_ == State::ZONE2_DOWN_STAIRS)
+        {
+            RCLCPP_INFO(get_logger(), "Zone2: DOWN_STAIRS — 10Hz cmd=2");
+            startStairPublishing(2);
             return;
         }
 
@@ -629,8 +694,16 @@ private:
         if (state_ == State::ZONE2_FINISH)
         {
             publishGrabSceneEnable(false);
-            RCLCPP_INFO(get_logger(), "Zone2 finished, go to MF exit");
-            transitionTo(State::GO_TO_MF_EXIT);
+            if (use_fixed_zone2_route_)
+            {
+                RCLCPP_INFO(get_logger(), "Zone2 finished, mission complete");
+                transitionTo(State::DONE);
+            }
+            else
+            {
+                RCLCPP_INFO(get_logger(), "Zone2 finished, go to MF exit");
+                transitionTo(State::GO_TO_MF_EXIT);
+            }
             return;
         }
 
@@ -700,6 +773,47 @@ private:
 
     static bool is_entry_block(int idx) { return idx == 0 || idx == 1 || idx == 2; }
     static bool is_exit_block(int idx)  { return idx == 9 || idx == 10 || idx == 11; }
+
+    void buildZone2FixedRoute()
+    {
+        zone2_tasks_.clear();
+
+        for (int i = 0; i < 6; ++i)
+        {
+            Zone2Task t;
+            t.id = i;
+            t.x = zone2_fixed_[i].x;
+            t.y = zone2_fixed_[i].y;
+            t.yaw = zone2_fixed_[i].yaw;
+            t.qx = zone2_fixed_[i].qx;
+            t.qy = zone2_fixed_[i].qy;
+            t.qz = zone2_fixed_[i].qz;
+            t.qw = zone2_fixed_[i].qw;
+            t.grab_scene = 0;
+            t.arm_command = 0;
+
+            // 计算与下个点的 yaw 差决定台阶方向
+            if (i + 1 < 6)
+            {
+                double dyaw = zone2_fixed_[i + 1].yaw - zone2_fixed_[i].yaw;
+                t.stair_cmd = (dyaw > 0) ? 1 : 2;  // 正=上, 负=下
+            }
+            else
+            {
+                t.stair_cmd = 0;  // 最后一个点, 无台阶
+            }
+
+            zone2_tasks_.push_back(t);
+        }
+
+        RCLCPP_INFO(get_logger(), "buildZone2FixedRoute: %zu tasks:", zone2_tasks_.size());
+        for (size_t i = 0; i < zone2_tasks_.size(); ++i)
+        {
+            const auto &t = zone2_tasks_[i];
+            RCLCPP_INFO(get_logger(), "  #%zu (%.2f,%.2f) yaw=%.3f q=(%.3f,%.3f,%.3f,%.3f) stair=%d",
+                        i, t.x, t.y, t.yaw, t.qx, t.qy, t.qz, t.qw, t.stair_cmd);
+        }
+    }
 
     void buildZone2Route(const std::vector<uint8_t> &lightboard_map)
     {
@@ -963,6 +1077,47 @@ private:
         return false;
     }
 
+    void sendNavigateWithQuat(double x, double y,
+                              double qx, double qy, double qz, double qw,
+                              const CompletionCb &on_done)
+    {
+        nav_chain_in_progress_ = true;
+
+        if (!waitActionServer<NavigateToPose>(nav_to_pose_client_, "navigate_to_pose"))
+        {
+            nav_chain_in_progress_ = false;
+            on_done(false);
+            return;
+        }
+
+        NavigateToPose::Goal goal;
+        goal.pose.header.frame_id = nav_frame_id_;
+        goal.pose.header.stamp = this->now();
+        goal.pose.pose.position.x = x;
+        goal.pose.pose.position.y = y;
+        goal.pose.pose.position.z = 0.0;
+        goal.pose.pose.orientation.x = qx;
+        goal.pose.pose.orientation.y = qy;
+        goal.pose.pose.orientation.z = qz;
+        goal.pose.pose.orientation.w = qw;
+
+        RCLCPP_INFO(get_logger(), "NAV→ (%.2f,%.2f) q=(%.3f,%.3f,%.3f,%.3f)", x, y, qx, qy, qz, qw);
+
+        auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
+        options.goal_response_callback = [this](std::shared_ptr<GoalHandleNavigateToPose> gh)
+        {
+            RCLCPP_INFO(get_logger(), "NavigateToPose %s", gh ? "ACCEPTED" : "REJECTED");
+        };
+        options.result_callback = [this, on_done](const GoalHandleNavigateToPose::WrappedResult &r)
+        {
+            bool ok = (r.code == rclcpp_action::ResultCode::SUCCEEDED);
+            RCLCPP_INFO(get_logger(), "NAV done: %s", ok ? "OK" : "FAIL");
+            nav_chain_in_progress_ = false;
+            on_done(ok);
+        };
+        nav_to_pose_client_->async_send_goal(goal, options);
+    }
+
     void sendNavigateAndSpin(double x, double y, double spin_rad,
                              const CompletionCb &on_done)
     {
@@ -1093,10 +1248,60 @@ private:
             return;
         }
 
-        if ((now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1000000)
+        if (!stair_timer_ &&
+            (now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1000000)
         {
             publishUpperCommand(0);
             last_idle_heartbeat_time_ = now_time;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 上/下台阶: 10Hz 直接发布, 先0后目标cmd, 不用ACK/DONE
+    // ═════════════════════════════════════════════════════════════
+
+    void startStairPublishing(uint8_t target_cmd)
+    {
+        stair_target_cmd_ = target_cmd;
+        stair_phase_ = 0;
+        stair_phase_start_ = now();
+        stair_timer_ = create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&R2DecisionNode::tickStair, this));
+    }
+
+    void tickStair()
+    {
+        auto elapsed = (now() - stair_phase_start_).seconds();
+
+        if (stair_phase_ == 0)
+        {
+            publishUpperCommand(0);
+            if (elapsed >= 0.5)
+            {
+                stair_phase_ = 1;
+                stair_phase_start_ = now();
+            }
+        }
+        else
+        {
+            publishUpperCommand(stair_target_cmd_);
+            if (elapsed >= 0.5)
+            {
+                stair_timer_->cancel();
+                stair_timer_.reset();
+                RCLCPP_INFO(get_logger(), "Stair: cmd=%d done", stair_target_cmd_);
+
+                if (state_ == State::ZONE1_UP_STAIRS)
+                    transitionTo(State::ZONE1_DOWN_STAIRS);
+                else if (state_ == State::ZONE1_DOWN_STAIRS)
+                    transitionTo(State::ZONE1_FINISH);
+                else if (state_ == State::ZONE2_UP_STAIRS || state_ == State::ZONE2_DOWN_STAIRS)
+                {
+                    ++current_zone2_index_;
+                    transitionTo(State::ZONE2_NAV_POINT);
+                }
+            }
         }
     }
 
@@ -1165,40 +1370,6 @@ private:
             {
                 transitionTo(State::ZONE1_DOCK_R1);
             }
-            return;
-        }
-
-        // Zone1 上台阶完成
-        if (state_ == State::ZONE1_UP_STAIRS)
-        {
-            if (!msg->success && zone1_arm_retry_count_ < kZone1ArmMaxRetry)
-            {
-                ++zone1_arm_retry_count_;
-                RCLCPP_WARN(get_logger(), "Zone1 up stairs retry %d/%d",
-                            zone1_arm_retry_count_, kZone1ArmMaxRetry);
-                startReliableUpperCommand(msg->command);
-                return;
-            }
-            zone1_arm_retry_count_ = 0;
-            RCLCPP_INFO(get_logger(), "Zone1: up stairs done, going down stairs");
-            transitionTo(State::ZONE1_DOWN_STAIRS);
-            return;
-        }
-
-        // Zone1 下台阶完成
-        if (state_ == State::ZONE1_DOWN_STAIRS)
-        {
-            if (!msg->success && zone1_arm_retry_count_ < kZone1ArmMaxRetry)
-            {
-                ++zone1_arm_retry_count_;
-                RCLCPP_WARN(get_logger(), "Zone1 down stairs retry %d/%d",
-                            zone1_arm_retry_count_, kZone1ArmMaxRetry);
-                startReliableUpperCommand(msg->command);
-                return;
-            }
-            zone1_arm_retry_count_ = 0;
-            RCLCPP_INFO(get_logger(), "Zone1: down stairs done, planning Zone2");
-            transitionTo(State::ZONE1_FINISH);
             return;
         }
 
@@ -1354,6 +1525,8 @@ private:
     double scene_confirm_timeout_s_{5.0};
 
     Zone2BlockInfo zone2_blocks_[12];
+    bool use_fixed_zone2_route_{true};
+    Zone2FixedPoint zone2_fixed_[6];
     std::vector<Zone2Task> zone2_tasks_;
     std::size_t current_zone2_index_{0};
     int zone2_arm_retry_count_{0};
@@ -1401,6 +1574,12 @@ private:
     rclcpp::Time last_upper_send_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time upper_cmd_start_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_idle_heartbeat_time_{0, 0, RCL_ROS_TIME};
+
+    // stair sequence (10Hz publish, no ACK/DONE)
+    rclcpp::TimerBase::SharedPtr stair_timer_;
+    int stair_phase_{0};
+    rclcpp::Time stair_phase_start_;
+    uint8_t stair_target_cmd_{0};
 };
 
 int main(int argc, char **argv)
