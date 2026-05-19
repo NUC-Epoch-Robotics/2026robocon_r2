@@ -124,7 +124,10 @@ struct Zone2FixedPoint
     double approach_y{0.0};
     uint8_t block_height{0};  // target block height (1/2/3)
     uint8_t stand_height{0};  // stand block height (1/2/3)
+    int8_t stair_cmd{0};      // 1=up, 2=down, 0=none
 };
+
+constexpr int kMaxZone2FixedPoints = 8;
 
 class R2DecisionNode : public rclcpp::Node
 {
@@ -269,7 +272,11 @@ public:
 
         // Zone2 固定路线 (6点, 硬编码台阶)
         use_fixed_zone2_route_ = this->declare_parameter<bool>("use_fixed_zone2_route", true);
-        for (int i = 0; i < 6; ++i)
+        zone2_fixed_count_ = std::clamp(
+            this->declare_parameter<int>("zone2_fixed_count", 6),
+            0,
+            kMaxZone2FixedPoints);
+        for (int i = 0; i < kMaxZone2FixedPoints; ++i)
         {
             char px[32], py[32], pyaw[32], pqx[32], pqy[32], pqz[32], pqw[32];
             char rqx[32], rqy[32], rqz[32], rqw[32], ruse[32];
@@ -297,15 +304,18 @@ public:
             zone2_fixed_[i].rqy = this->declare_parameter<double>(rqy, 0.0);
             zone2_fixed_[i].rqz = this->declare_parameter<double>(rqz, 0.0);
             zone2_fixed_[i].rqw = this->declare_parameter<double>(rqw, 1.0);
-            char appx[32], appy[32], bth[32], sth[32];
+            char appx[32], appy[32], bth[32], sth[32], stair[32];
             snprintf(appx, sizeof(appx), "zone2_fixed_%d_approach_x", i);
             snprintf(appy, sizeof(appy), "zone2_fixed_%d_approach_y", i);
             snprintf(bth, sizeof(bth), "zone2_fixed_%d_block_height", i);
             snprintf(sth, sizeof(sth), "zone2_fixed_%d_stand_height", i);
+            snprintf(stair, sizeof(stair), "zone2_fixed_%d_stair_cmd", i);
             zone2_fixed_[i].approach_x   = this->declare_parameter<double>(appx, 0.0);
             zone2_fixed_[i].approach_y   = this->declare_parameter<double>(appy, 0.0);
             zone2_fixed_[i].block_height = static_cast<uint8_t>(this->declare_parameter<int>(bth, 0));
             zone2_fixed_[i].stand_height = static_cast<uint8_t>(this->declare_parameter<int>(sth, 0));
+            zone2_fixed_[i].stair_cmd = static_cast<int8_t>(
+                this->declare_parameter<int>(stair, 0));
         }
 
         // Zone2 入口抓取参数 (x=1.6 ↔ x=3.0, 入口区地面→梅花林row0方块)
@@ -963,7 +973,7 @@ private:
     {
         zone2_tasks_.clear();
 
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < zone2_fixed_count_; ++i)
         {
             Zone2Task t;
             t.id = i;
@@ -996,7 +1006,11 @@ private:
             }
 
             // 计算与下个点的 yaw 差决定台阶方向
-            if (i + 1 < 6)
+            if (zone2_fixed_[i].stair_cmd != 0)
+            {
+                t.stair_cmd = zone2_fixed_[i].stair_cmd;
+            }
+            else if (i + 1 < zone2_fixed_count_)
             {
                 double dyaw = zone2_fixed_[i + 1].yaw - zone2_fixed_[i].yaw;
                 t.stair_cmd = (dyaw > 0) ? 1 : 2;  // 正=上, 负=下
@@ -1808,7 +1822,8 @@ private:
 
     Zone2BlockInfo zone2_blocks_[12];
     bool use_fixed_zone2_route_{true};
-    Zone2FixedPoint zone2_fixed_[6];
+    int zone2_fixed_count_{6};
+    Zone2FixedPoint zone2_fixed_[kMaxZone2FixedPoints];
     std::vector<Zone2Task> zone2_tasks_;
     std::size_t current_zone2_index_{0};
     int zone2_arm_retry_count_{0};
