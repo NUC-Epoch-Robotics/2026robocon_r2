@@ -308,12 +308,14 @@ public:
             zone2_fixed_[i].stand_height = static_cast<uint8_t>(this->declare_parameter<int>(sth, 0));
         }
 
-        // Zone2 入口抓取参数 (x=1.6 ↔ x=2.0)
+        // Zone2 入口抓取参数 (x=1.6 ↔ x=3.0, 入口区地面→梅花林row0方块)
         entry_approach_x_ = this->declare_parameter<double>("entry_approach_x", 1.6);
-        entry_block0_x_ = this->declare_parameter<double>("entry_block0_x", 2.0);
-        entry_block0_y_ = this->declare_parameter<double>("entry_block0_y", 0.0);
-        entry_block2_x_ = this->declare_parameter<double>("entry_block2_x", 2.0);
-        entry_block2_y_ = this->declare_parameter<double>("entry_block2_y", 0.0);
+        entry_block0_x_ = this->declare_parameter<double>("entry_block0_x", 3.0);
+        entry_block0_y_ = this->declare_parameter<double>("entry_block0_y", 0.289);
+        entry_block0_is_finsh_ = static_cast<uint8_t>(this->declare_parameter<int>("entry_block0_is_finsh", 2));
+        entry_block2_x_ = this->declare_parameter<double>("entry_block2_x", 3.0);
+        entry_block2_y_ = this->declare_parameter<double>("entry_block2_y", 1.41);
+        entry_block2_is_finsh_ = static_cast<uint8_t>(this->declare_parameter<int>("entry_block2_is_finsh", 1));
 
         // ── 模拟模式: 无真实硬件时打印决策输出 ──
         sim_mode_ = this->declare_parameter<bool>("sim_mode", false);
@@ -688,9 +690,10 @@ private:
 
             if (entry_grab_step_ == 1)
             {
-                RCLCPP_INFO(get_logger(), "EntryGrab %s step1: EXTEND → nav block (%.2f,%.2f)",
-                            side_name, block_x, block_y);
-                publishCmd(0, 2);
+                const uint8_t is_finsh = (entry_grab_side_ == 0) ? entry_block0_is_finsh_ : entry_block2_is_finsh_;
+                RCLCPP_INFO(get_logger(), "EntryGrab %s step1: EXTEND is_finsh=%d → nav block (%.2f,%.2f)",
+                            side_name, is_finsh, block_x, block_y);
+                publishCmd(0, is_finsh);
                 entry_grab_step_ = 2;
                 sendNavigateWithQuat(
                     block_x, block_y, 0, 0, 0, 1,
@@ -1866,12 +1869,14 @@ private:
     rclcpp::Time grab_phase_start_;
     uint8_t grab_is_finsh_{0};
 
-    // entry grab (blocks 0 and 2 from entry zone)
-    int entry_grab_side_{0};   // 0=left(block0), 1=right(block2)
+    // entry grab (blocks from entry zone)
+    int entry_grab_side_{0};
     int entry_grab_step_{0};   // 0=nav approach, 1=extend+nav block, 2=nav back, 3=retract
+    uint8_t entry_block0_is_finsh_{2};
+    uint8_t entry_block2_is_finsh_{1};
     double entry_approach_x_{1.6};
-    double entry_block0_x_{2.0}, entry_block0_y_{0.0};
-    double entry_block2_x_{2.0}, entry_block2_y_{0.0};
+    double entry_block0_x_{3.0}, entry_block0_y_{0.289};
+    double entry_block2_x_{3.0}, entry_block2_y_{1.41};
 };
 
 int main(int argc, char **argv)
