@@ -690,6 +690,7 @@ private:
             const double block_y = entry_block0_y_;
             const uint8_t is_finsh = entry_block0_is_finsh_;
 
+            // step 0: nav to approach
             if (entry_grab_step_ == 0)
             {
                 RCLCPP_INFO(get_logger(), "EntryGrab step0: nav approach (%.2f,%.2f)", entry_approach_x_, block_y);
@@ -700,17 +701,16 @@ private:
                 return;
             }
 
+            // step 1: extend + wait 1s → nav forward to block
             if (entry_grab_step_ == 1)
             {
                 if (entry_grab_phase_ != 3)
                 {
-                    // 初次进入: 伸出+启动timer, 等1s让手臂完全伸出再前进
-                    RCLCPP_INFO(get_logger(), "EntryGrab step1: EXTEND is_finsh=%d, wait 1s before moving", is_finsh);
+                    RCLCPP_INFO(get_logger(), "EntryGrab step1: EXTEND is_finsh=%d, wait 1s", is_finsh);
                     publishCmd(0, is_finsh);
                     startEntryGrabTimer();
                     return;
                 }
-                // 1s 已过, 前进抓块
                 RCLCPP_INFO(get_logger(), "EntryGrab step1: nav forward → (%.2f,%.2f)", block_x, block_y);
                 entry_grab_step_ = 2;
                 sendNavigateWithQuat(
@@ -719,26 +719,41 @@ private:
                 return;
             }
 
+            // step 2: 吸住, 等 15s 再倒车
             if (entry_grab_step_ == 2)
             {
-                RCLCPP_INFO(get_logger(), "EntryGrab step2: REVERSE nav back (%.2f,%.2f)", entry_approach_x_, block_y);
+                RCLCPP_INFO(get_logger(), "EntryGrab step2: grabbed, wait 15s before reverse");
+                entry_grab_phase_ = 1;
+                entry_grab_phase_start_ = now();
                 entry_grab_step_ = 3;
+                return;
+            }
+
+            // step 3: 倒车回 approach (15s 已过才进入 nav)
+            if (entry_grab_step_ == 3)
+            {
+                if (entry_grab_phase_ == 1)
+                    return;  // 还在等 15s
+                RCLCPP_INFO(get_logger(), "EntryGrab step3: REVERSE → (%.2f,%.2f)", entry_approach_x_, block_y);
+                entry_grab_step_ = 4;
                 sendNavigateWithQuat(
                     entry_approach_x_, block_y, 0, 0, 0, 1,
                     [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 return;
             }
 
-            if (entry_grab_step_ == 3)
+            // step 4: 收回
+            if (entry_grab_step_ == 4)
             {
-                RCLCPP_INFO(get_logger(), "EntryGrab step3: wait 20s for grab to settle...");
-                entry_grab_phase_ = 1;
+                RCLCPP_INFO(get_logger(), "EntryGrab step4: RETRACT");
+                entry_grab_phase_ = 2;
                 entry_grab_phase_start_ = now();
-                entry_grab_step_ = 4;
+                entry_grab_step_ = 5;
                 return;
             }
 
-            if (entry_grab_step_ == 4)
+            // step 5: 收回完成, 进 Zone2
+            if (entry_grab_step_ == 5)
             {
                 RCLCPP_INFO(get_logger(), "EntryGrab done, entering forest");
                 transitionTo(State::ZONE2_NAV_POINT);
@@ -1544,7 +1559,7 @@ private:
         // 10Hz 持续发布当前指令
         if (entry_grab_phase_ == 0 || entry_grab_phase_ == 1 || entry_grab_phase_ == 3)
         {
-            // 阶段0: 伸出后等1s / 阶段1: 倒车后等20s / 阶段3: 前进+倒车中保持伸出
+            // 阶段0: 伸出等1s / 阶段1: 吸住等15s / 阶段3: nav中保持伸出
             publishCmd(0, entry_block0_is_finsh_);
         }
         else
@@ -1557,21 +1572,23 @@ private:
 
         if (entry_grab_phase_ == 0 && elapsed >= 1.0)
         {
-            // 1s 等待结束 → 可以前进抓块
+            // 1s 到 → 前进抓块
             entry_grab_phase_ = 3;
             entry_grab_phase_start_ = now();
             if (state_ == State::ZONE2_ENTRY_GRAB)
                 transitionTo(State::ZONE2_ENTRY_GRAB);
         }
-        else if (entry_grab_phase_ == 1 && elapsed >= 20.0)
+        else if (entry_grab_phase_ == 1 && elapsed >= 15.0)
         {
-            // 20s 等待结束 → 收回
-            entry_grab_phase_ = 2;
+            // 15s 到 → 倒车
+            entry_grab_phase_ = 3;
             entry_grab_phase_start_ = now();
+            if (state_ == State::ZONE2_ENTRY_GRAB)
+                transitionTo(State::ZONE2_ENTRY_GRAB);
         }
         else if (entry_grab_phase_ == 2 && elapsed >= 0.5)
         {
-            // 收回完成 → 跳转
+            // 收回完成
             entry_grab_timer_->cancel();
             entry_grab_timer_.reset();
             RCLCPP_INFO(get_logger(), "EntryGrab: grab sequence complete");
@@ -1607,7 +1624,7 @@ private:
         else if (grab_phase_ == 1)
         {
             publishCmd(0, grab_is_finsh_);
-            if (elapsed >= 20.0)
+            if (elapsed >= 15.0)
             {
                 grab_phase_ = 2;
                 grab_phase_start_ = now();
@@ -1940,9 +1957,9 @@ private:
     uint8_t grab_is_finsh_{0};
 
     // entry grab (block0 at col0 only; block2 moved to zone2_fixed_0)
-    int entry_grab_step_{0};   // 0=nav approach, 1=extend+wait1s→forward, 2=nav back, 3=wait20s, 4=done
+    int entry_grab_step_{0};   // 0=nav approach, 1=extend+wait1s→forward, 2=wait15s, 3=reverse, 4=retract, 5=done
     rclcpp::TimerBase::SharedPtr entry_grab_timer_;
-    int entry_grab_phase_{0};  // 0=extend wait 1s, 1=wait 20s, 2=retract, 3=extend during nav
+    int entry_grab_phase_{0};  // 0=extend wait 1s, 1=wait 15s, 2=retract, 3=extend during nav
     rclcpp::Time entry_grab_phase_start_;
     uint8_t entry_block0_is_finsh_{2};
     double entry_approach_x_{1.6};

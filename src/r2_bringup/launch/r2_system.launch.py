@@ -53,7 +53,7 @@ def generate_launch_description():
                 'spearhead_base_y': -0.959,
                 'spearhead_base_spin': -0.622,
                 'spearhead_spacing': 0.2,
-                'zone1_route': [2, 1, 4, 5, 3, 6, 8],
+                'zone1_route': [2, 1, 4, 5, 3, 6],
                 # 其他 Zone1 导航点 (非矛头)
                 'zone1_point_2_x': 1.7,
                 'zone1_point_2_y': 1.42,
