@@ -75,7 +75,7 @@ def generate_launch_description():
                 'entry_block2_x': 3.0,
                 'entry_block2_y': 1.41,
                 'entry_block2_is_finsh': 1,
-                # 点0: col1row0(3.0,1.41) h=1 入口, 无抓取, 右转面朝col0
+                # 点0: col1row0(3.0,1.41) 入口抓取 block2, dh=1 is_finsh=1, 抓完右转面朝col0上台阶
                 'zone2_fixed_0_x': 3.0,
                 'zone2_fixed_0_y': 1.41,
                 'zone2_fixed_0_yaw': -0.422,
@@ -88,9 +88,9 @@ def generate_launch_description():
                 'zone2_fixed_0_rqy': 0.0,
                 'zone2_fixed_0_rqz': -0.707,
                 'zone2_fixed_0_rqw': 0.707,
-                'zone2_fixed_0_approach_x': 0.0,
-                'zone2_fixed_0_approach_y': 0.0,
-                'zone2_fixed_0_block_height': 0,
+                'zone2_fixed_0_approach_x': 1.6,
+                'zone2_fixed_0_approach_y': 1.41,
+                'zone2_fixed_0_block_height': 1,
                 'zone2_fixed_0_stand_height': 0,
                 'zone2_fixed_0_stair_cmd': 1,
                 # 点1: target=row1col0(4.2,0.289) h=3 站col0row0(3.0,0.289) h=2 → 抓一层高 is_finsh=1
