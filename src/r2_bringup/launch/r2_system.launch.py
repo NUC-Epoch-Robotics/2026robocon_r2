@@ -53,7 +53,7 @@ def generate_launch_description():
                 'spearhead_base_y': -0.959,
                 'spearhead_base_spin': -0.622,
                 'spearhead_spacing': 0.2,
-                'zone1_route': [2, 1, 4, 5, 3, 6, 7, 8],
+                'zone1_route': [2, 1, 4, 5, 3, 6, 8],
                 # 其他 Zone1 导航点 (非矛头)
                 'zone1_point_2_x': 1.7,
                 'zone1_point_2_y': 1.42,
@@ -69,7 +69,7 @@ def generate_launch_description():
                 # 高度: 2,1,2 / 3,2,1 / 2,3,2 / 1,2,1
                 # 入口抓取: block0(col0,y=0.289,h=2) is_finsh=2  block1(col1,y=1.41,h=1) is_finsh=1
                 'entry_approach_x': 1.6,
-                'entry_block0_x': 3.0,
+                'entry_block0_x': 2.0,
                 'entry_block0_y': 0.289,
                 'entry_block0_is_finsh': 2,
                 'entry_block2_x': 3.0,

@@ -317,9 +317,9 @@ public:
                 this->declare_parameter<int>(stair, 0));
         }
 
-        // Zone2 入口抓取参数 (x=1.6 ↔ x=3.0, 入口区地面→梅花林row0方块)
+        // Zone2 入口抓取参数 (x=1.6 ↔ x=2.0, 入口区地面→梅花林row0方块)
         entry_approach_x_ = this->declare_parameter<double>("entry_approach_x", 1.6);
-        entry_block0_x_ = this->declare_parameter<double>("entry_block0_x", 3.0);
+        entry_block0_x_ = this->declare_parameter<double>("entry_block0_x", 2.0);
         entry_block0_y_ = this->declare_parameter<double>("entry_block0_y", 0.289);
         entry_block0_is_finsh_ = static_cast<uint8_t>(this->declare_parameter<int>("entry_block0_is_finsh", 2));
         entry_block2_x_ = this->declare_parameter<double>("entry_block2_x", 3.0);
@@ -702,10 +702,16 @@ private:
 
             if (entry_grab_step_ == 1)
             {
-                RCLCPP_INFO(get_logger(), "EntryGrab step1: EXTEND is_finsh=%d + nav forward (%.2f,%.2f)",
-                            is_finsh, block_x, block_y);
-                publishCmd(0, is_finsh);
-                startEntryGrabTimer();
+                if (entry_grab_phase_ != 3)
+                {
+                    // 初次进入: 伸出+启动timer, 等1s让手臂完全伸出再前进
+                    RCLCPP_INFO(get_logger(), "EntryGrab step1: EXTEND is_finsh=%d, wait 1s before moving", is_finsh);
+                    publishCmd(0, is_finsh);
+                    startEntryGrabTimer();
+                    return;
+                }
+                // 1s 已过, 前进抓块
+                RCLCPP_INFO(get_logger(), "EntryGrab step1: nav forward → (%.2f,%.2f)", block_x, block_y);
                 entry_grab_step_ = 2;
                 sendNavigateWithQuat(
                     block_x, block_y, 0, 0, 0, 1,
@@ -1535,10 +1541,10 @@ private:
 
     void tickEntryGrab()
     {
-        // 10Hz 持续发布当前指令, 保持手臂状态
-        if (entry_grab_phase_ == 0 || entry_grab_phase_ == 1)
+        // 10Hz 持续发布当前指令
+        if (entry_grab_phase_ == 0 || entry_grab_phase_ == 1 || entry_grab_phase_ == 3)
         {
-            // 阶段0: 前进+倒车中保持伸出 / 阶段1: 倒车后等待20s
+            // 阶段0: 伸出后等1s / 阶段1: 倒车后等20s / 阶段3: 前进+倒车中保持伸出
             publishCmd(0, entry_block0_is_finsh_);
         }
         else
@@ -1549,7 +1555,15 @@ private:
 
         auto elapsed = (now() - entry_grab_phase_start_).seconds();
 
-        if (entry_grab_phase_ == 1 && elapsed >= 20.0)
+        if (entry_grab_phase_ == 0 && elapsed >= 1.0)
+        {
+            // 1s 等待结束 → 可以前进抓块
+            entry_grab_phase_ = 3;
+            entry_grab_phase_start_ = now();
+            if (state_ == State::ZONE2_ENTRY_GRAB)
+                transitionTo(State::ZONE2_ENTRY_GRAB);
+        }
+        else if (entry_grab_phase_ == 1 && elapsed >= 20.0)
         {
             // 20s 等待结束 → 收回
             entry_grab_phase_ = 2;
@@ -1926,13 +1940,13 @@ private:
     uint8_t grab_is_finsh_{0};
 
     // entry grab (block0 at col0 only; block2 moved to zone2_fixed_0)
-    int entry_grab_step_{0};   // 0=nav approach, 1=extend+nav block, 2=nav back, 3=wait, 4=done
+    int entry_grab_step_{0};   // 0=nav approach, 1=extend+wait1s→forward, 2=nav back, 3=wait20s, 4=done
     rclcpp::TimerBase::SharedPtr entry_grab_timer_;
-    int entry_grab_phase_{0};  // 0=extend during nav, 1=wait 20s, 2=retract 0.5s
+    int entry_grab_phase_{0};  // 0=extend wait 1s, 1=wait 20s, 2=retract, 3=extend during nav
     rclcpp::Time entry_grab_phase_start_;
     uint8_t entry_block0_is_finsh_{2};
     double entry_approach_x_{1.6};
-    double entry_block0_x_{3.0}, entry_block0_y_{0.289};
+    double entry_block0_x_{2.0}, entry_block0_y_{0.289};
     double entry_block2_x_{3.0}, entry_block2_y_{1.41};
     uint8_t entry_block2_is_finsh_{1};
 };
