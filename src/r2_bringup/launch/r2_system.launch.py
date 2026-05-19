@@ -65,13 +65,15 @@ def generate_launch_description():
                 'use_fixed_zone2_route': True,
                 # 梅花林: 1.2m网格, col0_y=2.531 col1_y=1.41 col2_y=0.289
                 # row_x: 3.0→4.2→5.4→6.6
-                # 高度: 2,1,2 / 1,2,3 / 2,3,2 / 1,2,1
-                # 入口抓取: block0(col2,y=0.289,h=2)  block2(col0,y=2.531,h=2)
+                # 高度: 2,1,2 / 3,2,1 / 2,3,2 / 1,2,1
+                # 入口抓取: block0(col0,y=0.289,h=2) is_finsh=2  block1(col1,y=1.41,h=1) is_finsh=1
                 'entry_approach_x': 1.6,
                 'entry_block0_x': 3.0,
                 'entry_block0_y': 0.289,
+                'entry_block0_is_finsh': 2,
                 'entry_block2_x': 3.0,
-                'entry_block2_y': 2.531,
+                'entry_block2_y': 1.41,
+                'entry_block2_is_finsh': 1,
                 # 点0: row0col1(3.0,1.41) h=1 入口, 无抓取, 需转向
                 'zone2_fixed_0_x': 3.0,
                 'zone2_fixed_0_y': 1.41,
