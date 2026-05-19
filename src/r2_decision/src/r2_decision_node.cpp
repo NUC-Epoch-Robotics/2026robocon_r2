@@ -795,7 +795,10 @@ private:
                     if (use_fixed_zone2_route_)
                     {
                         if (has_grab)
+                        {
+                            zone2_grab_step_ = 0;
                             transitionTo(State::ZONE2_GRAB);
+                        }
                         else if (task.use_rotate)
                             transitionTo(State::ZONE2_ROTATE);
                         else if (task.stair_cmd == 1)
@@ -874,25 +877,84 @@ private:
 
             if (use_fixed_zone2_route_)
             {
-                // 固定路线: 从approach后退10cm再抓
-                double dx = task.x - task.approach_x;
-                double dy = task.y - task.approach_y;
-                double dist = std::sqrt(dx * dx + dy * dy);
-                if (dist < 0.001) { dx = 0.0; dy = -1.0; dist = 1.0; }  // 默认后退
-                double gx = task.approach_x - 0.1 * (dx / dist);
-                double gy = task.approach_y - 0.1 * (dy / dist);
-
-                RCLCPP_INFO(get_logger(), "Zone2: grab back-10cm → (%.2f,%.2f) is_finsh=%d",
-                            gx, gy, task.grab_is_finsh);
-
-                sendNavigateWithQuat(
-                    gx, gy, 0, 0, 0, 1,
-                    [this, task](bool)
+                // 固定路线: 和入口抓取相同流程 (伸臂→前进→吸住→等15s→倒车→收回)
+                // step 0: extend + wait 1s
+                if (zone2_grab_step_ == 0)
+                {
+                    if (zone2_grab_phase_ != 3)
                     {
-                        if (state_ != State::ZONE2_GRAB)
-                            return;
-                        startGrabSequence(task.grab_is_finsh);
-                    });
+                        RCLCPP_INFO(get_logger(), "Zone2Grab point %d: EXTEND is_finsh=%d, wait 1s", task.id, task.grab_is_finsh);
+                        publishCmd(0, task.grab_is_finsh);
+                        startZone2GrabTimer();
+                        return;
+                    }
+                    // 1s到, 前进
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav forward → (%.2f,%.2f)", task.id, task.x, task.y);
+                    zone2_grab_step_ = 1;
+                    sendNavigateWithQuat(
+                        task.x, task.y, 0, 0, 0, 1,
+                        [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
+                    return;
+                }
+
+                // step 1: 吸住, 等 15s
+                if (zone2_grab_step_ == 1)
+                {
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: grabbed, wait 15s", task.id);
+                    zone2_grab_phase_ = 1;
+                    zone2_grab_phase_start_ = now();
+                    zone2_grab_step_ = 2;
+                    return;
+                }
+
+                // step 2: 倒车回 approach
+                if (zone2_grab_step_ == 2)
+                {
+                    if (zone2_grab_phase_ == 1)
+                        return;  // 还在等 15s
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: REVERSE → (%.2f,%.2f)", task.id, task.approach_x, task.approach_y);
+                    zone2_grab_step_ = 3;
+                    sendNavigateWithQuat(
+                        task.approach_x, task.approach_y, 0, 0, 0, 1,
+                        [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
+                    return;
+                }
+
+                // step 3: 收回
+                if (zone2_grab_step_ == 3)
+                {
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: RETRACT", task.id);
+                    zone2_grab_phase_ = 2;
+                    zone2_grab_phase_start_ = now();
+                    zone2_grab_step_ = 4;
+                    return;
+                }
+
+                // step 4: nav to block center → rotate/stairs
+                if (zone2_grab_step_ == 4)
+                {
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav to block center (%.2f,%.2f)", task.id, task.x, task.y);
+                    zone2_grab_step_ = 0;  // reset for next grab
+                    sendNavigateWithQuat(
+                        task.x, task.y, 0, 0, 0, 1,
+                        [this](bool success)
+                        {
+                            if (!success)
+                                RCLCPP_WARN(get_logger(), "Zone2: nav to block after grab failed");
+                            if (state_ != State::ZONE2_GRAB)
+                                return;
+                            const auto &t = zone2_tasks_[current_zone2_index_];
+                            if (t.use_rotate)
+                                transitionTo(State::ZONE2_ROTATE);
+                            else if (t.stair_cmd == 1)
+                                transitionTo(State::ZONE2_UP_STAIRS);
+                            else if (t.stair_cmd == 2)
+                                transitionTo(State::ZONE2_DOWN_STAIRS);
+                            else
+                                transitionTo(State::ZONE2_FINISH);
+                        });
+                    return;
+                }
                 return;
             }
 
@@ -1488,7 +1550,7 @@ private:
             return;
         }
 
-        if (!stair_timer_ && !grab_timer_ && !entry_grab_timer_ &&
+        if (!stair_timer_ && !grab_timer_ && !entry_grab_timer_ && !zone2_grab_timer_ &&
             (now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1000000)
         {
             publishCmd(0);
@@ -1594,6 +1656,53 @@ private:
             RCLCPP_INFO(get_logger(), "EntryGrab: grab sequence complete");
             if (state_ == State::ZONE2_ENTRY_GRAB)
                 transitionTo(State::ZONE2_ENTRY_GRAB);
+        }
+    }
+
+    void startZone2GrabTimer()
+    {
+        zone2_grab_phase_ = 0;
+        zone2_grab_phase_start_ = now();
+        zone2_grab_timer_ = create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&R2DecisionNode::tickZone2Grab, this));
+    }
+
+    void tickZone2Grab()
+    {
+        const auto &task = zone2_tasks_[current_zone2_index_];
+        if (zone2_grab_phase_ == 0 || zone2_grab_phase_ == 1 || zone2_grab_phase_ == 3)
+        {
+            publishCmd(0, task.grab_is_finsh);
+        }
+        else
+        {
+            publishCmd(0, 0);
+        }
+
+        auto elapsed = (now() - zone2_grab_phase_start_).seconds();
+
+        if (zone2_grab_phase_ == 0 && elapsed >= 1.0)
+        {
+            zone2_grab_phase_ = 3;
+            zone2_grab_phase_start_ = now();
+            if (state_ == State::ZONE2_GRAB)
+                transitionTo(State::ZONE2_GRAB);
+        }
+        else if (zone2_grab_phase_ == 1 && elapsed >= 15.0)
+        {
+            zone2_grab_phase_ = 3;
+            zone2_grab_phase_start_ = now();
+            if (state_ == State::ZONE2_GRAB)
+                transitionTo(State::ZONE2_GRAB);
+        }
+        else if (zone2_grab_phase_ == 2 && elapsed >= 0.5)
+        {
+            zone2_grab_timer_->cancel();
+            zone2_grab_timer_.reset();
+            RCLCPP_INFO(get_logger(), "Zone2Grab: sequence complete");
+            if (state_ == State::ZONE2_GRAB)
+                transitionTo(State::ZONE2_GRAB);
         }
     }
 
@@ -1965,6 +2074,10 @@ private:
     double entry_approach_x_{1.6};
     double entry_block0_x_{2.0}, entry_block0_y_{0.289};
     double entry_block2_x_{3.0}, entry_block2_y_{1.41};
+    int zone2_grab_step_{0};   // 0=extend+wait1s, 1=nav forward, 2=wait15s, 3=reverse, 4=retract, 5=nav to block center
+    rclcpp::TimerBase::SharedPtr zone2_grab_timer_;
+    int zone2_grab_phase_{0};  // 0=extend wait 1s, 1=wait 15s, 2=retract, 3=extend during nav
+    rclcpp::Time zone2_grab_phase_start_;
     uint8_t entry_block2_is_finsh_{1};
 };
 
