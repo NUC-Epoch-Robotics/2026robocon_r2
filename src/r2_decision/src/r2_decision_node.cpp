@@ -1029,7 +1029,13 @@ private:
                     zone2_grab_step_ = 7;
                     sendNavigateWithQuat(
                         fp.stair2_x, fp.stair2_y, 0, 0, qz, qw,
-                        [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
+                        [this](bool success)
+                        {
+                            if (!success)
+                                RCLCPP_WARN(get_logger(), "Zone2Grab point 0: nav stair2 FAIL (ignored, dist short)");
+                            if (state_ == State::ZONE2_GRAB)
+                                transitionTo(State::ZONE2_GRAB);
+                        });
                     return;
                 }
 
@@ -1723,6 +1729,11 @@ private:
 
     void startEntryGrabTimer()
     {
+        if (entry_grab_timer_)
+        {
+            entry_grab_timer_->cancel();
+            entry_grab_timer_.reset();
+        }
         entry_grab_phase_ = 0;
         entry_grab_phase_start_ = now();
         entry_grab_timer_ = create_wall_timer(
@@ -1775,6 +1786,11 @@ private:
 
     void startZone2GrabTimer()
     {
+        if (zone2_grab_timer_)
+        {
+            zone2_grab_timer_->cancel();
+            zone2_grab_timer_.reset();
+        }
         zone2_grab_phase_ = 0;
         zone2_grab_phase_start_ = now();
         zone2_grab_timer_ = create_wall_timer(
