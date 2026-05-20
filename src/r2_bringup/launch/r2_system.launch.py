@@ -72,11 +72,11 @@ def generate_launch_description():
                 'entry_block0_x': 2.0,
                 'entry_block0_y': 0.289,
                 'entry_block0_is_finsh': 2,
-                'entry_block2_x': 3.0,
+                'entry_block2_x': 2.0,
                 'entry_block2_y': 1.41,
                 'entry_block2_is_finsh': 1,
-                # 点0: col1row0(3.0,1.41) 入口抓取 block2, dh=1 is_finsh=1, 抓完右转面朝col0上台阶
-                'zone2_fixed_0_x': 3.0,
+                # 点0: col1 入口块 (2.0,1.41) dh=1 is_finsh=1, 抓完右转面朝col0上台阶
+                'zone2_fixed_0_x': 2.0,
                 'zone2_fixed_0_y': 1.41,
                 'zone2_fixed_0_yaw': -0.422,
                 'zone2_fixed_0_qx': 0.0,

@@ -831,12 +831,19 @@ private:
                         RCLCPP_WARN(get_logger(), "Zone2: rotate nav failed");
                     if (state_ != State::ZONE2_ROTATE)
                         return;
-                    if (task.stair_cmd == 1)
-                        transitionTo(State::ZONE2_UP_STAIRS);
-                    else if (task.stair_cmd == 2)
-                        transitionTo(State::ZONE2_DOWN_STAIRS);
+                    if (task.stair_cmd == 1 || task.stair_cmd == 2)
+                    {
+                        zone2_post_rotate_stairs_done_ = true;
+                        if (task.stair_cmd == 1)
+                            transitionTo(State::ZONE2_UP_STAIRS);
+                        else
+                            transitionTo(State::ZONE2_DOWN_STAIRS);
+                    }
                     else
-                        transitionTo(State::ZONE2_FINISH);
+                    {
+                        ++current_zone2_index_;
+                        transitionTo(State::ZONE2_NAV_POINT);
+                    }
                 });
             return;
         }
@@ -944,12 +951,12 @@ private:
                             if (state_ != State::ZONE2_GRAB)
                                 return;
                             const auto &t = zone2_tasks_[current_zone2_index_];
-                            if (t.use_rotate)
-                                transitionTo(State::ZONE2_ROTATE);
-                            else if (t.stair_cmd == 1)
+                            if (t.stair_cmd == 1)
                                 transitionTo(State::ZONE2_UP_STAIRS);
                             else if (t.stair_cmd == 2)
                                 transitionTo(State::ZONE2_DOWN_STAIRS);
+                            else if (t.use_rotate)
+                                transitionTo(State::ZONE2_ROTATE);
                             else
                                 transitionTo(State::ZONE2_FINISH);
                         });
@@ -1600,8 +1607,23 @@ private:
                     transitionTo(State::ZONE1_FINISH);
                 else if (state_ == State::ZONE2_UP_STAIRS || state_ == State::ZONE2_DOWN_STAIRS)
                 {
-                    ++current_zone2_index_;
-                    transitionTo(State::ZONE2_NAV_POINT);
+                    if (zone2_post_rotate_stairs_done_)
+                    {
+                        zone2_post_rotate_stairs_done_ = false;
+                        ++current_zone2_index_;
+                        transitionTo(State::ZONE2_NAV_POINT);
+                    }
+                    else
+                    {
+                        const auto &t = zone2_tasks_[current_zone2_index_];
+                        if (t.use_rotate)
+                            transitionTo(State::ZONE2_ROTATE);
+                        else
+                        {
+                            ++current_zone2_index_;
+                            transitionTo(State::ZONE2_NAV_POINT);
+                        }
+                    }
                 }
             }
         }
@@ -2085,6 +2107,7 @@ private:
     rclcpp::TimerBase::SharedPtr zone2_grab_timer_;
     int zone2_grab_phase_{0};  // 0=extend wait 1s, 1=wait 15s, 2=retract, 3=extend during nav
     rclcpp::Time zone2_grab_phase_start_;
+    bool zone2_post_rotate_stairs_done_{false};  // 旋转后再上台阶标记, 防止死循环
     uint8_t entry_block2_is_finsh_{1};
 };
 
