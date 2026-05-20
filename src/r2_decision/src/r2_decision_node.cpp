@@ -12,7 +12,6 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 
 #include "nav2_msgs/action/navigate_to_pose.hpp"
-#include "nav2_msgs/action/spin.hpp"
 
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/u_int8.hpp"
@@ -27,9 +26,7 @@ using std::placeholders::_1;
 using namespace std::chrono_literals;
 
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
-using Spin = nav2_msgs::action::Spin;
 using GoalHandleNavigateToPose = rclcpp_action::ClientGoalHandle<NavigateToPose>;
-using GoalHandleSpin = rclcpp_action::ClientGoalHandle<Spin>;
 
 enum class State
 {
@@ -67,7 +64,7 @@ struct WaypointTask
     int id;
     double x;
     double y;
-    double spin_rad;
+    double z;
     uint8_t arm_command{0};  // 该点要发的手臂指令, 0=IDLE
     bool skip_dock{false};   // 非矛头点跳过对接
 };
@@ -77,7 +74,7 @@ struct Zone2Task
     int id;
     double x;
     double y;
-    double yaw;
+    double z;
     double qx{0.0};
     double qy{0.0};
     double qz{0.0};
@@ -101,7 +98,7 @@ struct Zone2BlockInfo
 {
     double x;
     double y;
-    double spin_rad;
+    double z;
     uint8_t grab_scene;  // 1/2/3, 硬编码
 };
 
@@ -109,7 +106,7 @@ struct Zone2FixedPoint
 {
     double x;
     double y;
-    double yaw;
+    double z;
     double qx{0.0};
     double qy{0.0};
     double qz{0.0};
@@ -128,10 +125,18 @@ struct Zone2FixedPoint
     // point-0 custom stair waypoints
     double stair1_x{0.0};
     double stair1_y{0.0};
-    double stair1_yaw{0.0};
+    double stair1_z{0.0};
+    double stair1_qx{0.0};
+    double stair1_qy{0.0};
+    double stair1_qz{0.0};
+    double stair1_qw{1.0};
     double stair2_x{0.0};
     double stair2_y{0.0};
-    double stair2_yaw{0.0};
+    double stair2_z{0.0};
+    double stair2_qx{0.0};
+    double stair2_qy{0.0};
+    double stair2_qz{0.0};
+    double stair2_qw{1.0};
 };
 
 constexpr int kMaxZone2FixedPoints = 8;
@@ -159,8 +164,6 @@ public:
         // ── action clients ──────────────────────────────────────
         nav_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(
             this, "navigate_to_pose");
-        spin_client_ = rclcpp_action::create_client<Spin>(
-            this, "spin");
 
         // ── subscriptions ───────────────────────────────────────
         upper_ack_sub_ = create_subscription<r2_interfaces::msg::ArmAck>(
@@ -202,14 +205,14 @@ public:
         // Zone1 矛头位置: 基准点 + (n-1)*间距 (6个矛头等距排列, 200mm)
         double spearhead_base_x   = this->declare_parameter<double>("spearhead_base_x", 0.0);
         double spearhead_base_y   = this->declare_parameter<double>("spearhead_base_y", 0.0);
-        double spearhead_base_spin = this->declare_parameter<double>("spearhead_base_spin", 0.0);
+        double spearhead_base_z = this->declare_parameter<double>("spearhead_base_z", 0.0);
         double spearhead_spacing  = this->declare_parameter<double>("spearhead_spacing", 0.2);
         for (int n = 1; n <= 6; ++n)
         {
             point_table_[n] = {n,
                                spearhead_base_x + (n - 1) * spearhead_spacing,
                                spearhead_base_y,
-                               spearhead_base_spin,
+                               spearhead_base_z,
                                zone1_arm_command_,
                                false};  // 矛头点: 走抓取→对接流程
         }
@@ -221,20 +224,20 @@ public:
         point_table_[7] = {7,
                            this->declare_parameter<double>("zone1_point_2_x", 0.0),
                            this->declare_parameter<double>("zone1_point_2_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_2_spin", 0.0),
+                           this->declare_parameter<double>("zone1_point_2_z", 0.0),
                            0,
                            true};   // 上台阶前导航点, 不发手臂指令
         point_table_[8] = {8,
                            this->declare_parameter<double>("zone1_point_3_x", 0.0),
                            this->declare_parameter<double>("zone1_point_3_y", 0.0),
-                           this->declare_parameter<double>("zone1_point_3_spin", 0.0),
+                           this->declare_parameter<double>("zone1_point_3_z", 0.0),
                            0,
                            true};  // 下台阶前导航点, 不发手臂指令
 
         // R1 对接位置
-        dock_r1_x_    = this->declare_parameter<double>("dock_r1_x",    0.0);
-        dock_r1_y_    = this->declare_parameter<double>("dock_r1_y",    0.0);
-        dock_r1_spin_ = this->declare_parameter<double>("dock_r1_spin", 0.0);
+        dock_r1_x_ = this->declare_parameter<double>("dock_r1_x", 0.0);
+        dock_r1_y_ = this->declare_parameter<double>("dock_r1_y", 0.0);
+        dock_r1_z_ = this->declare_parameter<double>("dock_r1_z", 0.0);
 
         // Zone2 12个方块的物理坐标 和 grab_scene (硬编码场景类型，坐标标定后填入)
         // 地形 (上=入口, 下=出口):
@@ -248,10 +251,10 @@ public:
             char px[32], py[32], ps[32];
             snprintf(px, sizeof(px), "zone2_block_%d_x", idx);
             snprintf(py, sizeof(py), "zone2_block_%d_y", idx);
-            snprintf(ps, sizeof(ps), "zone2_block_%d_spin", idx);
+            snprintf(ps, sizeof(ps), "zone2_block_%d_z", idx);
             zone2_blocks_[idx].x = this->declare_parameter<double>(px, 0.0);
             zone2_blocks_[idx].y = this->declare_parameter<double>(py, 0.0);
-            zone2_blocks_[idx].spin_rad = this->declare_parameter<double>(ps, 0.0);
+            zone2_blocks_[idx].z = this->declare_parameter<double>(ps, 0.0);
         }
         // grab_scene 硬编码 (入口→出口, 从左到右)
         zone2_blocks_[0].grab_scene  = 2;
@@ -273,9 +276,9 @@ public:
         dock_timeout_s_ = this->declare_parameter<double>("dock_timeout_s", 15.0);
 
         // MF出口
-        mf_exit_x_        = this->declare_parameter<double>("mf_exit_x", 3.2);
-        mf_exit_y_        = this->declare_parameter<double>("mf_exit_y", 0.0);
-        mf_exit_spin_rad_ = this->declare_parameter<double>("mf_exit_spin_rad", 0.0);
+        mf_exit_x_ = this->declare_parameter<double>("mf_exit_x", 3.2);
+        mf_exit_y_ = this->declare_parameter<double>("mf_exit_y", 0.0);
+        mf_exit_z_ = this->declare_parameter<double>("mf_exit_z", 0.0);
 
         // Zone2 固定路线 (6点, 硬编码台阶)
         use_fixed_zone2_route_ = this->declare_parameter<bool>("use_fixed_zone2_route", true);
@@ -288,7 +291,7 @@ public:
             char rqx[32], rqy[32], rqz[32], rqw[32], ruse[32];
             snprintf(px, sizeof(px), "zone2_fixed_%d_x", i);
             snprintf(py, sizeof(py), "zone2_fixed_%d_y", i);
-            snprintf(pyaw, sizeof(pyaw), "zone2_fixed_%d_yaw", i);
+            snprintf(pyaw, sizeof(pyaw), "zone2_fixed_%d_z", i);
             snprintf(pqx, sizeof(pqx), "zone2_fixed_%d_qx", i);
             snprintf(pqy, sizeof(pqy), "zone2_fixed_%d_qy", i);
             snprintf(pqz, sizeof(pqz), "zone2_fixed_%d_qz", i);
@@ -300,7 +303,7 @@ public:
             snprintf(rqw, sizeof(rqw), "zone2_fixed_%d_rqw", i);
             zone2_fixed_[i].x   = this->declare_parameter<double>(px, 0.0);
             zone2_fixed_[i].y   = this->declare_parameter<double>(py, 0.0);
-            zone2_fixed_[i].yaw = this->declare_parameter<double>(pyaw, 0.0);
+            zone2_fixed_[i].z = this->declare_parameter<double>(pyaw, 0.0);
             zone2_fixed_[i].qx  = this->declare_parameter<double>(pqx, 0.0);
             zone2_fixed_[i].qy  = this->declare_parameter<double>(pqy, 0.0);
             zone2_fixed_[i].qz  = this->declare_parameter<double>(pqz, 0.0);
@@ -322,19 +325,36 @@ public:
             zone2_fixed_[i].stand_height = static_cast<uint8_t>(this->declare_parameter<int>(sth, 0));
             zone2_fixed_[i].stair_cmd = static_cast<int8_t>(
                 this->declare_parameter<int>(stair, 0));
-            char s1x[32], s1y[32], s1yaw[32], s2x[32], s2y[32], s2yaw[32];
+            char s1x[32], s1y[32], s1z[32], s1qx[32], s1qy[32], s1qz[32], s1qw[32];
+            char s2x[32], s2y[32], s2z[32], s2qx[32], s2qy[32], s2qz[32], s2qw[32];
             snprintf(s1x, sizeof(s1x), "zone2_fixed_%d_stair1_x", i);
             snprintf(s1y, sizeof(s1y), "zone2_fixed_%d_stair1_y", i);
-            snprintf(s1yaw, sizeof(s1yaw), "zone2_fixed_%d_stair1_yaw", i);
+            snprintf(s1z, sizeof(s1z), "zone2_fixed_%d_stair1_z", i);
+            snprintf(s1qx, sizeof(s1qx), "zone2_fixed_%d_stair1_qx", i);
+            snprintf(s1qy, sizeof(s1qy), "zone2_fixed_%d_stair1_qy", i);
+            snprintf(s1qz, sizeof(s1qz), "zone2_fixed_%d_stair1_qz", i);
+            snprintf(s1qw, sizeof(s1qw), "zone2_fixed_%d_stair1_qw", i);
             snprintf(s2x, sizeof(s2x), "zone2_fixed_%d_stair2_x", i);
             snprintf(s2y, sizeof(s2y), "zone2_fixed_%d_stair2_y", i);
-            snprintf(s2yaw, sizeof(s2yaw), "zone2_fixed_%d_stair2_yaw", i);
-            zone2_fixed_[i].stair1_x   = this->declare_parameter<double>(s1x, 0.0);
-            zone2_fixed_[i].stair1_y   = this->declare_parameter<double>(s1y, 0.0);
-            zone2_fixed_[i].stair1_yaw = this->declare_parameter<double>(s1yaw, 0.0);
-            zone2_fixed_[i].stair2_x   = this->declare_parameter<double>(s2x, 0.0);
-            zone2_fixed_[i].stair2_y   = this->declare_parameter<double>(s2y, 0.0);
-            zone2_fixed_[i].stair2_yaw = this->declare_parameter<double>(s2yaw, 0.0);
+            snprintf(s2z, sizeof(s2z), "zone2_fixed_%d_stair2_z", i);
+            snprintf(s2qx, sizeof(s2qx), "zone2_fixed_%d_stair2_qx", i);
+            snprintf(s2qy, sizeof(s2qy), "zone2_fixed_%d_stair2_qy", i);
+            snprintf(s2qz, sizeof(s2qz), "zone2_fixed_%d_stair2_qz", i);
+            snprintf(s2qw, sizeof(s2qw), "zone2_fixed_%d_stair2_qw", i);
+            zone2_fixed_[i].stair1_x  = this->declare_parameter<double>(s1x, 0.0);
+            zone2_fixed_[i].stair1_y  = this->declare_parameter<double>(s1y, 0.0);
+            zone2_fixed_[i].stair1_z  = this->declare_parameter<double>(s1z, 0.0);
+            zone2_fixed_[i].stair1_qx = this->declare_parameter<double>(s1qx, 0.0);
+            zone2_fixed_[i].stair1_qy = this->declare_parameter<double>(s1qy, 0.0);
+            zone2_fixed_[i].stair1_qz = this->declare_parameter<double>(s1qz, 0.0);
+            zone2_fixed_[i].stair1_qw = this->declare_parameter<double>(s1qw, 1.0);
+            zone2_fixed_[i].stair2_x  = this->declare_parameter<double>(s2x, 0.0);
+            zone2_fixed_[i].stair2_y  = this->declare_parameter<double>(s2y, 0.0);
+            zone2_fixed_[i].stair2_z  = this->declare_parameter<double>(s2z, 0.0);
+            zone2_fixed_[i].stair2_qx = this->declare_parameter<double>(s2qx, 0.0);
+            zone2_fixed_[i].stair2_qy = this->declare_parameter<double>(s2qy, 0.0);
+            zone2_fixed_[i].stair2_qz = this->declare_parameter<double>(s2qz, 0.0);
+            zone2_fixed_[i].stair2_qw = this->declare_parameter<double>(s2qw, 1.0);
         }
 
         // Zone2 入口抓取参数 (x=1.6 ↔ x=2.0, 入口区地面→梅花林row0方块)
@@ -587,8 +607,8 @@ private:
             const auto task = it->second;
             RCLCPP_INFO(get_logger(), "Zone1: nav → point %d (%.2f, %.2f)",
                         task.id, task.x, task.y);
-            sendNavigateAndSpin(
-                task.x, task.y, task.spin_rad,
+            sendNavigateWithQuat(
+                task.x, task.y, task.z, 0.0, 0.0, 0.0, 1.0,
                 [this](bool success)
                 {
                     if (!success)
@@ -641,8 +661,8 @@ private:
 
             RCLCPP_INFO(get_logger(), "Zone1: nav → R1 dock (%.2f, %.2f)",
                         dock_r1_x_, dock_r1_y_);
-            sendNavigateAndSpin(
-                dock_r1_x_, dock_r1_y_, dock_r1_spin_,
+            sendNavigateWithQuat(
+                dock_r1_x_, dock_r1_y_, dock_r1_z_, 0.0, 0.0, 0.0, 1.0,
                 [this](bool success)
                 {
                     if (!success)
@@ -716,7 +736,7 @@ private:
                 RCLCPP_INFO(get_logger(), "EntryGrab step0: nav approach (%.2f,%.2f)", entry_approach_x_, block_y);
                 entry_grab_step_ = 1;
                 sendNavigateWithQuat(
-                    entry_approach_x_, block_y, 0, 0, 0, 1,
+                    entry_approach_x_, block_y, 0.0, 0, 0, 0, 1,
                     [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 return;
             }
@@ -734,7 +754,7 @@ private:
                 RCLCPP_INFO(get_logger(), "EntryGrab step1: nav forward → (%.2f,%.2f)", block_x, block_y);
                 entry_grab_step_ = 2;
                 sendNavigateWithQuat(
-                    block_x, block_y, 0, 0, 0, 1,
+                    block_x, block_y, 0.0, 0, 0, 0, 1,
                     [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 return;
             }
@@ -757,7 +777,7 @@ private:
                 RCLCPP_INFO(get_logger(), "EntryGrab step3: REVERSE → (%.2f,%.2f)", entry_approach_x_, block_y);
                 entry_grab_step_ = 4;
                 sendNavigateWithQuat(
-                    entry_approach_x_, block_y, 0, 0, 0, 1,
+                    entry_approach_x_, block_y, 0.0, 0, 0, 0, 1,
                     [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 return;
             }
@@ -796,11 +816,11 @@ private:
             const double nav_x = has_grab ? task.approach_x : task.x;
             const double nav_y = has_grab ? task.approach_y : task.y;
 
-            RCLCPP_INFO(get_logger(), "Zone2: nav → point %d (%.2f,%.2f) yaw=%.3f stair=%d grab=%d",
-                        task.id, nav_x, nav_y, task.yaw, task.stair_cmd, has_grab);
+            RCLCPP_INFO(get_logger(), "Zone2: nav → point %d (%.2f,%.2f) z=%.3f stair=%d grab=%d",
+                        task.id, nav_x, nav_y, task.z, task.stair_cmd, has_grab);
 
             sendNavigateWithQuat(
-                nav_x, nav_y, task.qx, task.qy, task.qz, task.qw,
+                nav_x, nav_y, task.z, task.qx, task.qy, task.qz, task.qw,
                 [this, task, has_grab](bool success)
                 {
                     if (!success)
@@ -844,7 +864,7 @@ private:
                         task.x, task.y, task.rqx, task.rqy, task.rqz, task.rqw);
 
             sendNavigateWithQuat(
-                task.x, task.y, task.rqx, task.rqy, task.rqz, task.rqw,
+                task.x, task.y, task.z, task.rqx, task.rqy, task.rqz, task.rqw,
                 [this, task](bool success)
                 {
                     if (!success)
@@ -919,7 +939,7 @@ private:
                     RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav forward → (%.2f,%.2f)", task.id, task.x, task.y);
                     zone2_grab_step_ = 1;
                     sendNavigateWithQuat(
-                        task.x, task.y, 0, 0, 0, 1,
+                        task.x, task.y, 0.0, 0, 0, 0, 1,
                         [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
                     return;
                 }
@@ -942,7 +962,7 @@ private:
                     RCLCPP_INFO(get_logger(), "Zone2Grab point %d: REVERSE → (%.2f,%.2f)", task.id, task.approach_x, task.approach_y);
                     zone2_grab_step_ = 3;
                     sendNavigateWithQuat(
-                        task.approach_x, task.approach_y, 0, 0, 0, 1,
+                        task.approach_x, task.approach_y, 0.0, 0, 0, 0, 1,
                         [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
                     return;
                 }
@@ -963,20 +983,18 @@ private:
                     if (task.id == 0 && zone2_fixed_[0].stair1_x != 0.0)
                     {
                         const auto &fp = zone2_fixed_[0];
-                        double qz = sin(fp.stair1_yaw / 2.0);
-                        double qw = cos(fp.stair1_yaw / 2.0);
-                        RCLCPP_INFO(get_logger(), "Zone2Grab point 0: nav stair1 → (%.2f,%.2f) yaw=%.3f",
-                                    fp.stair1_x, fp.stair1_y, fp.stair1_yaw);
+                        RCLCPP_INFO(get_logger(), "Zone2Grab point 0: nav stair1 → (%.2f,%.2f) z=%.3f q=(%.3f,%.3f,%.3f,%.3f)",
+                                    fp.stair1_x, fp.stair1_y, fp.stair1_z, fp.stair1_qx, fp.stair1_qy, fp.stair1_qz, fp.stair1_qw);
                         zone2_grab_step_ = 5;
                         sendNavigateWithQuat(
-                            fp.stair1_x, fp.stair1_y, 0, 0, qz, qw,
+                            fp.stair1_x, fp.stair1_y, fp.stair1_z, fp.stair1_qx, fp.stair1_qy, fp.stair1_qz, fp.stair1_qw,
                             [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
                         return;
                     }
                     RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav to block center (%.2f,%.2f)", task.id, task.x, task.y);
                     zone2_grab_step_ = 0;  // reset for next grab
                     sendNavigateWithQuat(
-                        task.x, task.y, 0, 0, 0, 1,
+                        task.x, task.y, 0.0, 0, 0, 0, 1,
                         [this](bool success)
                         {
                             if (!success)
@@ -1022,13 +1040,11 @@ private:
                     if (zone2_grab_phase_ != 50)
                         return;  // 还在等待手臂序列完成
                     const auto &fp = zone2_fixed_[0];
-                    double qz = sin(fp.stair2_yaw / 2.0);
-                    double qw = cos(fp.stair2_yaw / 2.0);
-                    RCLCPP_INFO(get_logger(), "Zone2Grab point 0: nav stair2 → (%.2f,%.2f) yaw=%.3f",
-                                fp.stair2_x, fp.stair2_y, fp.stair2_yaw);
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point 0: nav stair2 → (%.2f,%.2f) z=%.3f q=(%.3f,%.3f,%.3f,%.3f)",
+                                fp.stair2_x, fp.stair2_y, fp.stair2_z, fp.stair2_qx, fp.stair2_qy, fp.stair2_qz, fp.stair2_qw);
                     zone2_grab_step_ = 7;
                     sendNavigateWithQuat(
-                        fp.stair2_x, fp.stair2_y, 0, 0, qz, qw,
+                        fp.stair2_x, fp.stair2_y, fp.stair2_z, fp.stair2_qx, fp.stair2_qy, fp.stair2_qz, fp.stair2_qw,
                         [this](bool success)
                         {
                             if (!success)
@@ -1092,8 +1108,8 @@ private:
         // ── 去MF出口 ────────────────────────────────────────────
         if (state_ == State::GO_TO_MF_EXIT)
         {
-            sendNavigateAndSpin(
-                mf_exit_x_, mf_exit_y_, mf_exit_spin_rad_,
+            sendNavigateWithQuat(
+                mf_exit_x_, mf_exit_y_, mf_exit_z_, 0.0, 0.0, 0.0, 1.0,
                 [this](bool success)
                 {
                     if (!success)
@@ -1166,7 +1182,7 @@ private:
             t.id = i;
             t.x = zone2_fixed_[i].x;
             t.y = zone2_fixed_[i].y;
-            t.yaw = zone2_fixed_[i].yaw;
+            t.z = zone2_fixed_[i].z;
             t.qx = zone2_fixed_[i].qx;
             t.qy = zone2_fixed_[i].qy;
             t.qz = zone2_fixed_[i].qz;
@@ -1192,15 +1208,15 @@ private:
                 else              t.grab_is_finsh = 0;
             }
 
-            // 计算与下个点的 yaw 差决定台阶方向
+            // 计算与下个点的高度差决定台阶方向
             if (zone2_fixed_[i].stair_cmd != 0)
             {
                 t.stair_cmd = zone2_fixed_[i].stair_cmd;
             }
             else if (i + 1 < zone2_fixed_count_)
             {
-                double dyaw = zone2_fixed_[i + 1].yaw - zone2_fixed_[i].yaw;
-                t.stair_cmd = (dyaw > 0) ? 1 : 2;  // 正=上, 负=下
+                double dz = zone2_fixed_[i + 1].z - zone2_fixed_[i].z;
+                t.stair_cmd = (dz > 0) ? 1 : 2;  // 正=上, 负=下
             }
             else
             {
@@ -1215,9 +1231,9 @@ private:
         {
             const auto &t = zone2_tasks_[i];
             RCLCPP_INFO(get_logger(),
-                "  #%zu (%.2f,%.2f) yaw=%.3f stair=%d app=(%.2f,%.2f) "
+                "  #%zu (%.2f,%.2f) z=%.3f stair=%d app=(%.2f,%.2f) "
                 "h_stand=%d h_block=%d is_finsh=%d rot=%d",
-                i, t.x, t.y, t.yaw, t.stair_cmd, t.approach_x, t.approach_y,
+                i, t.x, t.y, t.z, t.stair_cmd, t.approach_x, t.approach_y,
                 t.stand_height, t.block_height, t.grab_is_finsh, t.use_rotate);
         }
     }
@@ -1362,7 +1378,7 @@ private:
             t.id = idx;
             t.x = zone2_blocks_[idx].x;
             t.y = zone2_blocks_[idx].y;
-            t.yaw = zone2_blocks_[idx].spin_rad;
+            t.z = zone2_blocks_[idx].z;
             t.grab_scene = zone2_blocks_[idx].grab_scene;
             t.arm_command = sceneToArmCmd(t.grab_scene);
             zone2_tasks_.push_back(t);
@@ -1484,7 +1500,7 @@ private:
         return false;
     }
 
-    void sendNavigateWithQuat(double x, double y,
+    void sendNavigateWithQuat(double x, double y, double z,
                               double qx, double qy, double qz, double qw,
                               const CompletionCb &on_done)
     {
@@ -1502,13 +1518,13 @@ private:
         goal.pose.header.stamp = this->now();
         goal.pose.pose.position.x = x;
         goal.pose.pose.position.y = y;
-        goal.pose.pose.position.z = 0.0;
+        goal.pose.pose.position.z = z;
         goal.pose.pose.orientation.x = qx;
         goal.pose.pose.orientation.y = qy;
         goal.pose.pose.orientation.z = qz;
         goal.pose.pose.orientation.w = qw;
 
-        RCLCPP_INFO(get_logger(), "NAV→ (%.2f,%.2f) q=(%.3f,%.3f,%.3f,%.3f)", x, y, qx, qy, qz, qw);
+        RCLCPP_INFO(get_logger(), "NAV→ (%.2f,%.2f,%.2f) q=(%.3f,%.3f,%.3f,%.3f)", x, y, z, qx, qy, qz, qw);
 
         auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
         options.goal_response_callback = [this](std::shared_ptr<GoalHandleNavigateToPose> gh)
@@ -1523,94 +1539,6 @@ private:
             on_done(ok);
         };
         nav_to_pose_client_->async_send_goal(goal, options);
-    }
-
-    void sendNavigateAndSpin(double x, double y, double spin_rad,
-                             const CompletionCb &on_done)
-    {
-        nav_chain_in_progress_ = true;
-        sendNavigateGoal(x, y,
-            [this, spin_rad, on_done](bool nav_ok)
-            {
-                if (!nav_ok)
-                {
-                    nav_chain_in_progress_ = false;
-                    on_done(false);
-                    return;
-                }
-                // TODO: spin 由 /spin topic 独立控制, 此处跳过
-                (void)spin_rad;
-                nav_chain_in_progress_ = false;
-                on_done(true);
-            });
-    }
-
-    void sendNavigateGoal(double x, double y, const CompletionCb &on_done)
-    {
-        if (!waitActionServer<NavigateToPose>(nav_to_pose_client_, "navigate_to_pose"))
-        {
-            on_done(false);
-            return;
-        }
-
-        NavigateToPose::Goal goal;
-        goal.pose.header.frame_id = nav_frame_id_;
-        goal.pose.header.stamp = this->now();
-        goal.pose.pose.position.x = x;
-        goal.pose.pose.position.y = y;
-        goal.pose.pose.position.z = 0.0;
-        goal.pose.pose.orientation.x = 0.0;
-        goal.pose.pose.orientation.y = 0.0;
-        goal.pose.pose.orientation.z = 0.0;
-        goal.pose.pose.orientation.w = 1.0;
-
-        RCLCPP_INFO(get_logger(), "NAV→ (%.2f, %.2f)", x, y);
-
-        auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
-        options.goal_response_callback = [this](std::shared_ptr<GoalHandleNavigateToPose> gh)
-        {
-            RCLCPP_INFO(get_logger(), "NavigateToPose %s", gh ? "ACCEPTED" : "REJECTED");
-        };
-        options.result_callback = [this, on_done](const GoalHandleNavigateToPose::WrappedResult &r)
-        {
-            bool ok = (r.code == rclcpp_action::ResultCode::SUCCEEDED);
-            RCLCPP_INFO(get_logger(), "NAV done: %s", ok ? "OK" : "FAIL");
-            on_done(ok);
-        };
-        nav_to_pose_client_->async_send_goal(goal, options);
-    }
-
-    void sendSpinGoal(double spin_rad, const CompletionCb &on_done)
-    {
-        if (std::fabs(spin_rad) < 1e-4)
-        {
-            on_done(true);
-            return;
-        }
-
-        if (!waitActionServer<Spin>(spin_client_, "spin"))
-        {
-            on_done(false);
-            return;
-        }
-
-        Spin::Goal goal;
-        goal.target_yaw = spin_rad;
-
-        RCLCPP_INFO(get_logger(), "SPIN→ %.3f rad", spin_rad);
-
-        auto options = rclcpp_action::Client<Spin>::SendGoalOptions();
-        options.goal_response_callback = [this](std::shared_ptr<GoalHandleSpin> gh)
-        {
-            RCLCPP_INFO(get_logger(), "Spin %s", gh ? "ACCEPTED" : "REJECTED");
-        };
-        options.result_callback = [this, on_done](const GoalHandleSpin::WrappedResult &r)
-        {
-            bool ok = (r.code == rclcpp_action::ResultCode::SUCCEEDED);
-            RCLCPP_INFO(get_logger(), "SPIN done: %s", ok ? "OK" : "FAIL");
-            on_done(ok);
-        };
-        spin_client_->async_send_goal(goal, options);
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -1919,7 +1847,7 @@ private:
             RCLCPP_INFO(get_logger(), "Zone2: grab done → nav to block %d (%.2f,%.2f)",
                         task.id, task.x, task.y);
             sendNavigateWithQuat(
-                task.x, task.y, 0, 0, 0, 1,
+                task.x, task.y, task.z, 0, 0, 0, 1,
                 [this](bool success)
                 {
                     if (!success)
@@ -2146,7 +2074,6 @@ private:
 
     // ── action clients ──────────────────────────────────────────
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_to_pose_client_;
-    rclcpp_action::Client<Spin>::SharedPtr spin_client_;
 
     // ── timer ───────────────────────────────────────────────────
     rclcpp::TimerBase::SharedPtr timer_;
@@ -2159,7 +2086,7 @@ private:
     std::vector<int64_t> zone1_route_ids_;
     std::size_t current_zone1_index_{0};
 
-    double dock_r1_x_{0.0}, dock_r1_y_{0.0}, dock_r1_spin_{0.0};
+    double dock_r1_x_{0.0}, dock_r1_y_{0.0}, dock_r1_z_{0.0};
     double dock_timeout_s_{15.0};
     double zone1_max_time_s_{120.0};
     double scene_confirm_timeout_s_{5.0};
@@ -2172,7 +2099,7 @@ private:
     std::size_t current_zone2_index_{0};
     int zone2_arm_retry_count_{0};
 
-    double mf_exit_x_{3.2}, mf_exit_y_{0.0}, mf_exit_spin_rad_{0.0};
+    double mf_exit_x_{3.2}, mf_exit_y_{0.0}, mf_exit_z_{0.0};
 
     // ── 状态标志 ────────────────────────────────────────────────
     bool sim_mode_{false};
