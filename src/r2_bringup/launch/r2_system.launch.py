@@ -93,6 +93,14 @@ def generate_launch_description():
                 'zone2_fixed_0_block_height': 1,
                 'zone2_fixed_0_stand_height': 0,
                 'zone2_fixed_0_stair_cmd': 1,
+                # 点0 台阶航点1: (1.7, 1.41, yaw=-0.622) 伸出/收回占位
+                'zone2_fixed_0_stair1_x': 1.7,
+                'zone2_fixed_0_stair1_y': 1.41,
+                'zone2_fixed_0_stair1_yaw': -0.622,
+                # 点0 台阶航点2: (1.9, 1.41, yaw=-0.622) 上台阶
+                'zone2_fixed_0_stair2_x': 1.9,
+                'zone2_fixed_0_stair2_y': 1.41,
+                'zone2_fixed_0_stair2_yaw': -0.622,
                 # 点1: target=row1col0(4.2,0.289) h=3 站col0row0(3.0,0.289) h=2 → 抓一层高 is_finsh=1
                 'zone2_fixed_1_x': 4.2,
                 'zone2_fixed_1_y': 0.289,
