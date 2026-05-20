@@ -75,7 +75,7 @@ def generate_launch_description():
                 'entry_block2_x': 2.0,
                 'entry_block2_y': 1.41,
                 'entry_block2_is_finsh': 1,
-                # 点0: col1 入口块 (2.0,1.41) dh=1 is_finsh=1, 抓完→上台阶→右转(-Y)→上台阶→左转(+Y)→上台阶
+                # 点0: col1 入口块 (2.0,1.41) dh=1 is_finsh=1, 抓完→倒回→NAV(3.0,1.41)→上台阶→右转(-Y)→上台阶→转回(+X)→上台阶
                 'zone2_fixed_0_x': 2.0,
                 'zone2_fixed_0_y': 1.41,
                 'zone2_fixed_0_z': -0.422,
@@ -86,13 +86,15 @@ def generate_launch_description():
                 'zone2_fixed_0_use_rotate': True,
                 'zone2_fixed_0_rqx': 0.0,
                 'zone2_fixed_0_rqy': 0.0,
-                'zone2_fixed_0_rqz': 0.707,
+                'zone2_fixed_0_rqz': -0.707,
                 'zone2_fixed_0_rqw': 0.707,
                 'zone2_fixed_0_approach_x': 1.6,
                 'zone2_fixed_0_approach_y': 1.41,
                 'zone2_fixed_0_block_height': 1,
                 'zone2_fixed_0_stand_height': 0,
                 'zone2_fixed_0_stair_cmd': 0,
+                'zone2_fixed_0_rotate_x': 3.0,
+                'zone2_fixed_0_rotate_y': 1.41,
                 # 点1: row1col0(4.2,0.289) 站col0row0(3.0,0.289) h=3 抓 h=2 → 高抓低 is_finsh=3, 抓完下台阶
                 'zone2_fixed_1_x': 4.2,
                 'zone2_fixed_1_y': 0.289,

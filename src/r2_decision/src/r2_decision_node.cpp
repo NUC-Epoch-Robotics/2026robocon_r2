@@ -92,6 +92,8 @@ struct Zone2Task
     uint8_t arm_command;
     int8_t stair_cmd{0};  // 1=上, 2=下, 0=无
     uint8_t grab_is_finsh{0};  // is_finsh for this grab
+    double rotate_x{0.0};
+    double rotate_y{0.0};
 };
 
 struct Zone2BlockInfo
@@ -122,6 +124,8 @@ struct Zone2FixedPoint
     uint8_t block_height{0};  // target block height (1/2/3)
     uint8_t stand_height{0};  // stand block height (1/2/3)
     int8_t stair_cmd{0};      // 1=up, 2=down, 0=none
+    double rotate_x{0.0};
+    double rotate_y{0.0};
 };
 
 constexpr int kMaxZone2FixedPoints = 8;
@@ -310,6 +314,11 @@ public:
             zone2_fixed_[i].stand_height = static_cast<uint8_t>(this->declare_parameter<int>(sth, 0));
             zone2_fixed_[i].stair_cmd = static_cast<int8_t>(
                 this->declare_parameter<int>(stair, 0));
+            char rotx[32], roty[32];
+            snprintf(rotx, sizeof(rotx), "zone2_fixed_%d_rotate_x", i);
+            snprintf(roty, sizeof(roty), "zone2_fixed_%d_rotate_y", i);
+            zone2_fixed_[i].rotate_x = this->declare_parameter<double>(rotx, 0.0);
+            zone2_fixed_[i].rotate_y = this->declare_parameter<double>(roty, 0.0);
         }
 
         // Zone2 入口抓取参数 (x=1.6 ↔ x=2.0, 入口区地面→梅花林row0方块)
@@ -1083,6 +1092,8 @@ private:
             t.approach_y = zone2_fixed_[i].approach_y;
             t.block_height = zone2_fixed_[i].block_height;
             t.stand_height = zone2_fixed_[i].stand_height;
+            t.rotate_x = zone2_fixed_[i].rotate_x;
+            t.rotate_y = zone2_fixed_[i].rotate_y;
             t.grab_scene = 0;
             t.arm_command = 0;
             // 高度差 → is_finsh: Δh=1→1, Δh=2→2, 负→3
@@ -1660,51 +1671,65 @@ private:
         }
     }
 
-    // Point 0 custom: 3×上台阶 + 2×旋转, 由 zone2_point0_substep_ 驱动
+    // Point 0 custom: NAV to (3.0,1.41) → 3×上台阶 + 2×旋转, 由 zone2_point0_substep_ 驱动
     void handlePoint0Substep(const Zone2Task &task)
     {
+        const double rx = task.rotate_x != 0.0 ? task.rotate_x : task.approach_x;
+        const double ry = task.rotate_y != 0.0 ? task.rotate_y : task.approach_y;
+
         switch (zone2_point0_substep_)
         {
-        case 0:  // up_stairs #1
-            RCLCPP_INFO(get_logger(), "Point0 substep 0: UP_STAIRS #1");
+        case 0:  // NAV to rotation point (3.0, 1.41), q=0
+            RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f) to rotate point", rx, ry);
+            sendNavigateWithQuat(
+                rx, ry, task.z, 0, 0, 0, 1,
+                [this](bool) {
+                    if (state_ == State::ZONE2_GRAB) {
+                        zone2_point0_substep_ = 1;
+                        transitionTo(State::ZONE2_GRAB);
+                    }
+                });
+            break;
+        case 1:  // up_stairs #1 (q=0)
+            RCLCPP_INFO(get_logger(), "Point0 substep 1: UP_STAIRS #1");
             startZone2GrabTimer();
             zone2_grab_phase_ = 7;
             break;
-        case 1:  // rotate right (-Y)
-            RCLCPP_INFO(get_logger(), "Point0 substep 1: ROTATE (%.3f,%.3f,%.3f,%.3f)",
+        case 2:  // rotate right (-Y), rqz=-0.707
+            RCLCPP_INFO(get_logger(), "Point0 substep 2: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
                         task.rqx, task.rqy, task.rqz, task.rqw);
             sendNavigateWithQuat(
-                task.x, task.y, task.z, task.rqx, task.rqy, task.rqz, task.rqw,
+                rx, ry, task.z, task.rqx, task.rqy, task.rqz, task.rqw,
                 [this](bool) {
                     if (state_ == State::ZONE2_GRAB) {
-                        zone2_point0_substep_ = 2;
+                        zone2_point0_substep_ = 3;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 2:  // up_stairs #2
-            RCLCPP_INFO(get_logger(), "Point0 substep 2: UP_STAIRS #2");
+        case 3:  // up_stairs #2 (qz=-0.707)
+            RCLCPP_INFO(get_logger(), "Point0 substep 3: UP_STAIRS #2");
             startZone2GrabTimer();
             zone2_grab_phase_ = 7;
             break;
-        case 3:  // rotate toward +Y
-            RCLCPP_INFO(get_logger(), "Point0 substep 3: ROTATE (%.3f,%.3f,%.3f,%.3f)",
+        case 4:  // rotate back (+X), qz=0
+            RCLCPP_INFO(get_logger(), "Point0 substep 4: ROTATE back (%.3f,%.3f,%.3f,%.3f)",
                         task.qx, task.qy, task.qz, task.qw);
             sendNavigateWithQuat(
-                task.x, task.y, task.z, task.qx, task.qy, task.qz, task.qw,
+                rx, ry, task.z, task.qx, task.qy, task.qz, task.qw,
                 [this](bool) {
                     if (state_ == State::ZONE2_GRAB) {
-                        zone2_point0_substep_ = 4;
+                        zone2_point0_substep_ = 5;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 4:  // up_stairs #3
-            RCLCPP_INFO(get_logger(), "Point0 substep 4: UP_STAIRS #3");
+        case 5:  // up_stairs #3 (qz=0)
+            RCLCPP_INFO(get_logger(), "Point0 substep 5: UP_STAIRS #3");
             startZone2GrabTimer();
             zone2_grab_phase_ = 7;
             break;
-        case 5:  // done
+        case 6:  // done
             RCLCPP_INFO(get_logger(), "Point0 all substeps done, advance");
             zone2_point0_substep_ = 0;
             ++current_zone2_index_;
