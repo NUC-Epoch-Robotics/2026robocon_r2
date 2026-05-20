@@ -1671,7 +1671,7 @@ private:
         }
     }
 
-    // Point 0 custom: NAV to (3.0,1.41) → 3×上台阶 + 2×旋转, 由 zone2_point0_substep_ 驱动
+    // Point 0 custom: NAV to (3.0,1.41) 与上台阶并发 → 右转 → 上台阶 → 转回 → 上台阶
     void handlePoint0Substep(const Zone2Task &task)
     {
         const double rx = task.rotate_x != 0.0 ? task.rotate_x : task.approach_x;
@@ -1679,57 +1679,55 @@ private:
 
         switch (zone2_point0_substep_)
         {
-        case 0:  // NAV to rotation point (3.0, 1.41), q=0
-            RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f) to rotate point", rx, ry);
-            sendNavigateWithQuat(
-                rx, ry, task.z, 0, 0, 0, 1,
-                [this](bool) {
-                    if (state_ == State::ZONE2_GRAB) {
-                        zone2_point0_substep_ = 1;
-                        transitionTo(State::ZONE2_GRAB);
-                    }
+        case 0:  // NAV to (3.0,1.41) + UP_STAIRS #1 并发
+            RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f) + UP_STAIRS #1", rx, ry);
+            sendNavigateWithQuat(rx, ry, 0, 0, 0, 0, 1,
+                [this](bool success) {
+                    if (!success)
+                        RCLCPP_WARN(get_logger(), "Point0: NAV to rotate point failed");
                 });
-            break;
-        case 1:  // up_stairs #1 (q=0)
-            RCLCPP_INFO(get_logger(), "Point0 substep 1: UP_STAIRS #1");
             startZone2GrabTimer();
-            zone2_grab_phase_ = 7;
+            zone2_grab_phase_ = 7;  // phase 7 done → ++substep → case 1
             break;
-        case 2:  // rotate right (-Y), rqz=-0.707
-            RCLCPP_INFO(get_logger(), "Point0 substep 2: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
+        case 1:  // rotate right (-Y), rqz=-0.707
+            RCLCPP_INFO(get_logger(), "Point0 substep 1: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
                         task.rqx, task.rqy, task.rqz, task.rqw);
             sendNavigateWithQuat(
-                rx, ry, task.z, task.rqx, task.rqy, task.rqz, task.rqw,
-                [this](bool) {
+                rx, ry, 0, task.rqx, task.rqy, task.rqz, task.rqw,
+                [this](bool success) {
+                    if (!success)
+                        RCLCPP_WARN(get_logger(), "Point0: rotate right NAV failed");
                     if (state_ == State::ZONE2_GRAB) {
-                        zone2_point0_substep_ = 3;
+                        zone2_point0_substep_ = 2;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 3:  // up_stairs #2 (qz=-0.707)
-            RCLCPP_INFO(get_logger(), "Point0 substep 3: UP_STAIRS #2");
+        case 2:  // up_stairs #2
+            RCLCPP_INFO(get_logger(), "Point0 substep 2: UP_STAIRS #2");
             startZone2GrabTimer();
-            zone2_grab_phase_ = 7;
+            zone2_grab_phase_ = 7;  // phase 7 done → ++substep → case 3
             break;
-        case 4:  // rotate back (+X), qz=0
-            RCLCPP_INFO(get_logger(), "Point0 substep 4: ROTATE back (%.3f,%.3f,%.3f,%.3f)",
+        case 3:  // rotate back (+X), qz=0
+            RCLCPP_INFO(get_logger(), "Point0 substep 3: ROTATE back (%.3f,%.3f,%.3f,%.3f)",
                         task.qx, task.qy, task.qz, task.qw);
             sendNavigateWithQuat(
-                rx, ry, task.z, task.qx, task.qy, task.qz, task.qw,
-                [this](bool) {
+                rx, ry, 0, task.qx, task.qy, task.qz, task.qw,
+                [this](bool success) {
+                    if (!success)
+                        RCLCPP_WARN(get_logger(), "Point0: rotate back NAV failed");
                     if (state_ == State::ZONE2_GRAB) {
-                        zone2_point0_substep_ = 5;
+                        zone2_point0_substep_ = 4;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 5:  // up_stairs #3 (qz=0)
-            RCLCPP_INFO(get_logger(), "Point0 substep 5: UP_STAIRS #3");
+        case 4:  // up_stairs #3
+            RCLCPP_INFO(get_logger(), "Point0 substep 4: UP_STAIRS #3");
             startZone2GrabTimer();
-            zone2_grab_phase_ = 7;
+            zone2_grab_phase_ = 7;  // phase 7 done → ++substep → case 5
             break;
-        case 6:  // done
+        case 5:  // done
             RCLCPP_INFO(get_logger(), "Point0 all substeps done, advance");
             zone2_point0_substep_ = 0;
             ++current_zone2_index_;
