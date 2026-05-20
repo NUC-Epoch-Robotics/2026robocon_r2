@@ -51,16 +51,16 @@ def generate_launch_description():
                 # 矛头基准点 (1号矛头), 间距200mm, 顺序 2→1→4→5→3→6
                 'spearhead_base_x': -0.002,
                 'spearhead_base_y': -0.959,
-                'spearhead_base_spin': -0.622,
+                'spearhead_base_z': -0.622,
                 'spearhead_spacing': 0.2,
                 'zone1_route': [2, 1, 4, 5, 3, 6],
                 # 其他 Zone1 导航点 (非矛头)
                 'zone1_point_2_x': 1.7,
                 'zone1_point_2_y': 1.42,
-                'zone1_point_2_spin': -0.622,
+                'zone1_point_2_z': -0.622,
                 'zone1_point_3_x': 1.9,
                 'zone1_point_3_y': 1.42,
-                'zone1_point_3_spin': -0.622,
+                'zone1_point_3_z': -0.622,
                 # Zone2 固定路线 (5点, 显式台阶指令)
                 'use_fixed_zone2_route': True,
                 'zone2_fixed_count': 5,
@@ -78,7 +78,7 @@ def generate_launch_description():
                 # 点0: col1 入口块 (2.0,1.41) dh=1 is_finsh=1, 抓完右转面朝col0上台阶
                 'zone2_fixed_0_x': 2.0,
                 'zone2_fixed_0_y': 1.41,
-                'zone2_fixed_0_yaw': -0.422,
+                'zone2_fixed_0_z': -0.422,
                 'zone2_fixed_0_qx': 0.0,
                 'zone2_fixed_0_qy': 0.0,
                 'zone2_fixed_0_qz': 0.0,
@@ -93,18 +93,26 @@ def generate_launch_description():
                 'zone2_fixed_0_block_height': 1,
                 'zone2_fixed_0_stand_height': 0,
                 'zone2_fixed_0_stair_cmd': 1,
-                # 点0 台阶航点1: (1.7, 1.41, yaw=-0.622) 伸出/收回占位
+                # 点0 台阶航点1: (1.7, 1.41, z=-0.622) 伸出/收回占位
                 'zone2_fixed_0_stair1_x': 1.7,
                 'zone2_fixed_0_stair1_y': 1.41,
-                'zone2_fixed_0_stair1_yaw': -0.622,
-                # 点0 台阶航点2: (1.9, 1.41, yaw=-0.622) 上台阶
+                'zone2_fixed_0_stair1_z': -0.622,
+                'zone2_fixed_0_stair1_qx': 0.0,
+                'zone2_fixed_0_stair1_qy': 0.0,
+                'zone2_fixed_0_stair1_qz': 0.0,
+                'zone2_fixed_0_stair1_qw': 1.0,
+                # 点0 台阶航点2: (1.9, 1.41, z=-0.622) 上台阶
                 'zone2_fixed_0_stair2_x': 1.9,
                 'zone2_fixed_0_stair2_y': 1.41,
-                'zone2_fixed_0_stair2_yaw': -0.622,
+                'zone2_fixed_0_stair2_z': -0.622,
+                'zone2_fixed_0_stair2_qx': 0.0,
+                'zone2_fixed_0_stair2_qy': 0.0,
+                'zone2_fixed_0_stair2_qz': 0.0,
+                'zone2_fixed_0_stair2_qw': 1.0,
                 # 点1: target=row1col0(4.2,0.289) h=3 站col0row0(3.0,0.289) h=2 → 抓一层高 is_finsh=1
                 'zone2_fixed_1_x': 4.2,
                 'zone2_fixed_1_y': 0.289,
-                'zone2_fixed_1_yaw': -0.222,
+                'zone2_fixed_1_z': -0.222,
                 'zone2_fixed_1_qx': 0.0,
                 'zone2_fixed_1_qy': 0.0,
                 'zone2_fixed_1_qz': 0.0,
@@ -122,7 +130,7 @@ def generate_launch_description():
                 # 点2: target=row2col0(5.4,0.289) h=2 站row1col0(4.2,0.289) h=3 → 高抓低 is_finsh=3
                 'zone2_fixed_2_x': 5.4,
                 'zone2_fixed_2_y': 0.289,
-                'zone2_fixed_2_yaw': -0.022,
+                'zone2_fixed_2_z': -0.022,
                 'zone2_fixed_2_qx': 0.0,
                 'zone2_fixed_2_qy': 0.0,
                 'zone2_fixed_2_qz': 0.0,
@@ -135,7 +143,7 @@ def generate_launch_description():
                 # 点3: row3col0(6.6,0.289) 无抓取, 下台阶出梅花林
                 'zone2_fixed_3_x': 6.6,
                 'zone2_fixed_3_y': 0.289,
-                'zone2_fixed_3_yaw': -0.222,
+                'zone2_fixed_3_z': -0.222,
                 'zone2_fixed_3_qx': 0.0,
                 'zone2_fixed_3_qy': 0.0,
                 'zone2_fixed_3_qz': 0.0,
@@ -148,7 +156,7 @@ def generate_launch_description():
                 # 点4: 出口(7.5,0.289) 无抓取, 结束二区固定路线
                 'zone2_fixed_4_x': 7.5,
                 'zone2_fixed_4_y': 0.289,
-                'zone2_fixed_4_yaw': -0.622,
+                'zone2_fixed_4_z': -0.622,
                 'zone2_fixed_4_qx': 0.0,
                 'zone2_fixed_4_qy': 0.0,
                 'zone2_fixed_4_qz': 0.0,
