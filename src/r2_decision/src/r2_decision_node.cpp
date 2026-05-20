@@ -1816,7 +1816,12 @@ private:
             return;
 
         waiting_upper_ack_ = false;
-        RCLCPP_INFO(get_logger(), "ARM DONE: cmd=%d success=%d", msg->command, msg->success);
+        if (msg->command != last_arm_done_cmd_ || msg->success != last_arm_done_success_)
+        {
+            RCLCPP_INFO(get_logger(), "ARM DONE: cmd=%d success=%d", msg->command, msg->success);
+            last_arm_done_cmd_ = msg->command;
+            last_arm_done_success_ = msg->success;
+        }
 
         // Zone1 操作完成
         if (state_ == State::ZONE1_OPERATE_POINT)
@@ -1850,8 +1855,8 @@ private:
             return;
         }
 
-        // Zone2 抓取完成
-        if (state_ == State::ZONE2_GRAB)
+        // Zone2 抓取完成 (仅光板路线; 固定路线由 zone2_grab_timer_ 自行管理)
+        if (state_ == State::ZONE2_GRAB && !use_fixed_zone2_route_)
         {
             if (!msg->success && zone2_arm_retry_count_ < kZone2ArmMaxRetry)
             {
@@ -2049,6 +2054,8 @@ private:
     int zone1_arm_retry_count_{0};
     bool waiting_upper_ack_{false};
     uint8_t pending_upper_cmd_{0};
+    uint8_t last_arm_done_cmd_{0xFF};
+    bool last_arm_done_success_{true};
     rclcpp::Time last_upper_send_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time upper_cmd_start_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_idle_heartbeat_time_{0, 0, RCL_ROS_TIME};

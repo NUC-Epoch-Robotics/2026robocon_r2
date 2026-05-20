@@ -69,21 +69,15 @@ private:
 
     void onCommand(const robot_serial::msg::Juece::SharedPtr msg)
     {
-        RCLCPP_INFO(
-            this->get_logger(),
-            "Received arm command: %d",
-            msg->status_bit);
-
         publishAck(msg->status_bit);
 
         if (command_in_progress_)
         {
             if (msg->status_bit == active_command_)
             {
-                RCLCPP_INFO(
-                    this->get_logger(),
-                    "Duplicate command while running, ACK only: %d",
-                    msg->status_bit);
+                // 相同命令: 只计数, 不打日志
+                ++dup_count_;
+                return;
             }
             else
             {
@@ -94,6 +88,19 @@ private:
                     active_command_);
             }
             return;
+        }
+
+        if (dup_count_ > 0)
+        {
+            RCLCPP_INFO(this->get_logger(), "  (duplicate x%d)", dup_count_);
+            dup_count_ = 0;
+        }
+
+        if (msg->status_bit != last_logged_cmd_)
+        {
+            RCLCPP_INFO(this->get_logger(), "Received arm command: %d (is_finsh=%d)",
+                        msg->status_bit, msg->is_finsh);
+            last_logged_cmd_ = msg->status_bit;
         }
 
         command_in_progress_ = true;
@@ -114,6 +121,8 @@ private:
 
     bool command_in_progress_{false};
     uint8_t active_command_{0};
+    uint8_t last_logged_cmd_{0xFF};  // 上次打印的命令, 0xFF 确保首次必打
+    int dup_count_{0};
 };
 
 int main(int argc, char **argv)
