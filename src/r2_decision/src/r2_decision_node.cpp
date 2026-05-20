@@ -125,6 +125,13 @@ struct Zone2FixedPoint
     uint8_t block_height{0};  // target block height (1/2/3)
     uint8_t stand_height{0};  // stand block height (1/2/3)
     int8_t stair_cmd{0};      // 1=up, 2=down, 0=none
+    // point-0 custom stair waypoints
+    double stair1_x{0.0};
+    double stair1_y{0.0};
+    double stair1_yaw{0.0};
+    double stair2_x{0.0};
+    double stair2_y{0.0};
+    double stair2_yaw{0.0};
 };
 
 constexpr int kMaxZone2FixedPoints = 8;
@@ -315,6 +322,19 @@ public:
             zone2_fixed_[i].stand_height = static_cast<uint8_t>(this->declare_parameter<int>(sth, 0));
             zone2_fixed_[i].stair_cmd = static_cast<int8_t>(
                 this->declare_parameter<int>(stair, 0));
+            char s1x[32], s1y[32], s1yaw[32], s2x[32], s2y[32], s2yaw[32];
+            snprintf(s1x, sizeof(s1x), "zone2_fixed_%d_stair1_x", i);
+            snprintf(s1y, sizeof(s1y), "zone2_fixed_%d_stair1_y", i);
+            snprintf(s1yaw, sizeof(s1yaw), "zone2_fixed_%d_stair1_yaw", i);
+            snprintf(s2x, sizeof(s2x), "zone2_fixed_%d_stair2_x", i);
+            snprintf(s2y, sizeof(s2y), "zone2_fixed_%d_stair2_y", i);
+            snprintf(s2yaw, sizeof(s2yaw), "zone2_fixed_%d_stair2_yaw", i);
+            zone2_fixed_[i].stair1_x   = this->declare_parameter<double>(s1x, 0.0);
+            zone2_fixed_[i].stair1_y   = this->declare_parameter<double>(s1y, 0.0);
+            zone2_fixed_[i].stair1_yaw = this->declare_parameter<double>(s1yaw, 0.0);
+            zone2_fixed_[i].stair2_x   = this->declare_parameter<double>(s2x, 0.0);
+            zone2_fixed_[i].stair2_y   = this->declare_parameter<double>(s2y, 0.0);
+            zone2_fixed_[i].stair2_yaw = this->declare_parameter<double>(s2yaw, 0.0);
         }
 
         // Zone2 入口抓取参数 (x=1.6 ↔ x=2.0, 入口区地面→梅花林row0方块)
@@ -937,9 +957,22 @@ private:
                     return;
                 }
 
-                // step 4: nav to block center → rotate/stairs
+                // step 4: nav to stair1 (point 0) or block center (other points)
                 if (zone2_grab_step_ == 4)
                 {
+                    if (task.id == 0 && zone2_fixed_[0].stair1_x != 0.0)
+                    {
+                        const auto &fp = zone2_fixed_[0];
+                        double qz = sin(fp.stair1_yaw / 2.0);
+                        double qw = cos(fp.stair1_yaw / 2.0);
+                        RCLCPP_INFO(get_logger(), "Zone2Grab point 0: nav stair1 → (%.2f,%.2f) yaw=%.3f",
+                                    fp.stair1_x, fp.stair1_y, fp.stair1_yaw);
+                        zone2_grab_step_ = 5;
+                        sendNavigateWithQuat(
+                            fp.stair1_x, fp.stair1_y, 0, 0, qz, qw,
+                            [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
+                        return;
+                    }
                     RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav to block center (%.2f,%.2f)", task.id, task.x, task.y);
                     zone2_grab_step_ = 0;  // reset for next grab
                     sendNavigateWithQuat(
@@ -960,6 +993,65 @@ private:
                             else
                                 transitionTo(State::ZONE2_FINISH);
                         });
+                    return;
+                }
+
+                // ── Point 0 自定义台阶流程 ──
+                // step 5: arm seq at stair1 (is_finsh 0→1, wait 4s)
+                if (zone2_grab_step_ == 5)
+                {
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point 0: arm seq at stair1 (is_finsh 0→1, ~4s)");
+                    // TODO(stair): 订阅自定义话题检测到位后替换 wait
+                    // zone2_stair_arm_sub_ = create_subscription<std_msgs::msg::UInt8>(
+                    //     "r2/zone2/stair_arm_done", 10,
+                    //     [this](const std_msgs::msg::UInt8::SharedPtr msg) {
+                    //         if (msg->data == 1 && zone2_grab_step_ == 6) {
+                    //             zone2_grab_phase_ = 50;
+                    //             if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB);
+                    //         }
+                    //     });
+                    startZone2GrabTimer();
+                    zone2_grab_phase_ = 4;  // phase 4→5→50: retract→grab→done
+                    zone2_grab_step_ = 6;
+                    return;
+                }
+
+                // step 6: wait arm seq → nav to stair2
+                if (zone2_grab_step_ == 6)
+                {
+                    if (zone2_grab_phase_ != 50)
+                        return;  // 还在等待手臂序列完成
+                    const auto &fp = zone2_fixed_[0];
+                    double qz = sin(fp.stair2_yaw / 2.0);
+                    double qw = cos(fp.stair2_yaw / 2.0);
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point 0: nav stair2 → (%.2f,%.2f) yaw=%.3f",
+                                fp.stair2_x, fp.stair2_y, fp.stair2_yaw);
+                    zone2_grab_step_ = 7;
+                    sendNavigateWithQuat(
+                        fp.stair2_x, fp.stair2_y, 0, 0, qz, qw,
+                        [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
+                    return;
+                }
+
+                // step 7: stairs at stair2, wait 10s
+                if (zone2_grab_step_ == 7)
+                {
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point 0: STAIRS at stair2, wait 10s");
+                    startZone2GrabTimer();
+                    zone2_grab_phase_ = 6;  // phase 6→50: stairs cmd, 10s wait
+                    zone2_grab_step_ = 8;
+                    return;
+                }
+
+                // step 8: stairs done → next point
+                if (zone2_grab_step_ == 8)
+                {
+                    if (zone2_grab_phase_ != 50)
+                        return;  // 还在等 10s
+                    RCLCPP_INFO(get_logger(), "Zone2Grab point 0: stairs complete, next point");
+                    zone2_grab_step_ = 0;
+                    ++current_zone2_index_;
+                    transitionTo(State::ZONE2_NAV_POINT);
                     return;
                 }
                 return;
@@ -1693,18 +1785,46 @@ private:
     void tickZone2Grab()
     {
         const auto &task = zone2_tasks_[current_zone2_index_];
-        if (zone2_grab_phase_ == 0 || zone2_grab_phase_ == 1 || zone2_grab_phase_ == 3)
-        {
+
+        // Point 0 custom stair arm sequence
+        if (zone2_grab_phase_ == 4)
+            publishCmd(0, 0);   // is_finsh=0 retract
+        else if (zone2_grab_phase_ == 5)
+            publishCmd(0, 1);   // is_finsh=1 grab one layer
+        else if (zone2_grab_phase_ == 6)
+            publishCmd(1);      // status_bit=1 stairs up
+        else if (zone2_grab_phase_ == 0 || zone2_grab_phase_ == 1 || zone2_grab_phase_ == 3)
             publishCmd(0, task.grab_is_finsh);
-        }
         else
-        {
             publishCmd(0, 0);
-        }
 
         auto elapsed = (now() - zone2_grab_phase_start_).seconds();
 
-        if (zone2_grab_phase_ == 0 && elapsed >= 1.0)
+        // Point 0 custom: arm seq at stair1 (phase 4→5→50)
+        if (zone2_grab_phase_ == 4 && elapsed >= 1.0)
+        {
+            zone2_grab_phase_ = 5;
+            zone2_grab_phase_start_ = now();
+        }
+        else if (zone2_grab_phase_ == 5 && elapsed >= 3.0)
+        {
+            zone2_grab_phase_ = 50;  // sentinel: arm seq done
+            zone2_grab_phase_start_ = now();
+            if (state_ == State::ZONE2_GRAB)
+                transitionTo(State::ZONE2_GRAB);
+        }
+        // Point 0 custom: stairs wait (phase 6→50)
+        else if (zone2_grab_phase_ == 6 && elapsed >= 10.0)
+        {
+            zone2_grab_phase_ = 50;  // sentinel: stairs done
+            zone2_grab_phase_start_ = now();
+            zone2_grab_timer_->cancel();
+            zone2_grab_timer_.reset();
+            if (state_ == State::ZONE2_GRAB)
+                transitionTo(State::ZONE2_GRAB);
+        }
+        // Normal grab phases
+        else if (zone2_grab_phase_ == 0 && elapsed >= 1.0)
         {
             zone2_grab_phase_ = 3;
             zone2_grab_phase_start_ = now();
@@ -2108,6 +2228,8 @@ private:
     int zone2_grab_phase_{0};  // 0=extend wait 1s, 1=wait 15s, 2=retract, 3=extend during nav
     rclcpp::Time zone2_grab_phase_start_;
     bool zone2_post_rotate_stairs_done_{false};  // 旋转后再上台阶标记, 防止死循环
+    // TODO(stair): 后续替换 arm seq wait, 订阅自定义话题
+    // rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr zone2_stair_arm_sub_;
     uint8_t entry_block2_is_finsh_{1};
 };
 
