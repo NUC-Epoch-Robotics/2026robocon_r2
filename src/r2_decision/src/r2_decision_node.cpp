@@ -1607,7 +1607,7 @@ private:
         publishCmd(0, 0);
     }
 
-    // Point 0 custom: NAV to (3.0,1.41) 与上台阶并发 → 右转 → 上台阶 → 转回 → 上台阶
+    // Point 0 custom: NAV to (3.0,1.41) → 上台阶 → 右转 → 上台阶 → 转回 → 上台阶
     void handlePoint0Substep(const Zone2Task &task)
     {
         const double rx = task.rotate_x != 0.0 ? task.rotate_x : task.approach_x;
@@ -1615,20 +1615,33 @@ private:
 
         switch (zone2_point0_substep_)
         {
-        case 0: // NAV to (3.0,1.41) + UP_STAIRS #1 并发
-            RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f) + UP_STAIRS #1", rx, ry);
-            point0_nav_done_ = false;
+        case 0: // NAV to (3.0,1.41)
+            if (point0_nav_sent_ || nav_chain_in_progress_)
+                return;
+            point0_nav_sent_ = true;
+            RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f)", rx, ry);
             sendNavigateWithQuat(rx, ry, 0, 0, 0, 0, 1,
                                  [this](bool success)
                                  {
+                                     point0_nav_sent_ = false;
                                      if (!success)
+                                     {
                                          RCLCPP_WARN(get_logger(), "Point0: NAV to rotate point failed");
-                                     point0_nav_done_ = true;
+                                         return;
+                                     }
+                                     if (state_ == State::ZONE2_GRAB)
+                                     {
+                                         zone2_point0_substep_ = 1;
+                                         transitionTo(State::ZONE2_GRAB);
+                                     }
                                  });
+            break;
+        case 1: // up_stairs #1
+            RCLCPP_INFO(get_logger(), "Point0 substep 1: UP_STAIRS #1");
             startStairPublishing(1, StairContext::POINT0);
             break;
-        case 1: // rotate right (-Y), rqz=-0.707
-            if (!point0_nav_done_ || nav_chain_in_progress_)
+        case 2: // rotate right (-Y), rqz=-0.707
+            if (nav_chain_in_progress_)
                 return;
             RCLCPP_INFO(get_logger(), "Point0 substep 1: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
                         task.rqx, task.rqy, task.rqz, task.rqw);
@@ -1637,41 +1650,47 @@ private:
                 [this](bool success)
                 {
                     if (!success)
+                    {
                         RCLCPP_WARN(get_logger(), "Point0: rotate right NAV failed");
+                        return;
+                    }
                     if (state_ == State::ZONE2_GRAB)
                     {
-                        zone2_point0_substep_ = 2;
+                        zone2_point0_substep_ = 3;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 2: // up_stairs #2
-            RCLCPP_INFO(get_logger(), "Point0 substep 2: UP_STAIRS #2");
+        case 3: // up_stairs #2
+            RCLCPP_INFO(get_logger(), "Point0 substep 3: UP_STAIRS #2");
             startStairPublishing(1, StairContext::POINT0);
             break;
-        case 3: // rotate back (+X), qz=0
+        case 4: // rotate back (+X), qz=0
             if (nav_chain_in_progress_)
                 return;
-            RCLCPP_INFO(get_logger(), "Point0 substep 3: ROTATE back (%.3f,%.3f,%.3f,%.3f)",
+            RCLCPP_INFO(get_logger(), "Point0 substep 4: ROTATE back (%.3f,%.3f,%.3f,%.3f)",
                         task.qx, task.qy, task.qz, task.qw);
             sendNavigateWithQuat(
                 rx, ry, 0, task.qx, task.qy, task.qz, task.qw,
                 [this](bool success)
                 {
                     if (!success)
+                    {
                         RCLCPP_WARN(get_logger(), "Point0: rotate back NAV failed");
+                        return;
+                    }
                     if (state_ == State::ZONE2_GRAB)
                     {
-                        zone2_point0_substep_ = 4;
+                        zone2_point0_substep_ = 5;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 4: // up_stairs #3
-            RCLCPP_INFO(get_logger(), "Point0 substep 4: UP_STAIRS #3");
+        case 5: // up_stairs #3
+            RCLCPP_INFO(get_logger(), "Point0 substep 5: UP_STAIRS #3");
             startStairPublishing(1, StairContext::POINT0);
             break;
-        case 5: // done
+        case 6: // done
             RCLCPP_INFO(get_logger(), "Point0 all substeps done, advance");
             zone2_point0_sequence_active_ = false;
             zone2_point0_substep_ = 0;
@@ -2166,9 +2185,9 @@ private:
     uint8_t zone2_grab_is_finsh_{0};
     double zone2_fixed_backoff_{0.1};
     bool zone2_post_rotate_stairs_done_{false}; // 旋转后再上台阶标记, 防止死循环
-    int zone2_point0_substep_{0};               // 点0自定义: 0=上台阶1, 1=右转, 2=上台阶2, 3=左转, 4=上台阶3, 5=完成
+    int zone2_point0_substep_{0};               // 点0自定义: 0=去旋转点, 1=上台阶1, 2=右转, 3=上台阶2, 4=左转, 5=上台阶3, 6=完成
     bool zone2_point0_sequence_active_{false};
-    bool point0_nav_done_{false};
+    bool point0_nav_sent_{false};
     GrabContext grab_context_{GrabContext::NONE};
     uint8_t entry_block2_is_finsh_{1};
 };
