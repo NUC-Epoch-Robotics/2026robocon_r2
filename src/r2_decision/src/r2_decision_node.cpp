@@ -1607,7 +1607,7 @@ private:
         publishCmd(0, 0);
     }
 
-    // Point 0 custom: NAV to (3.0,1.41) → 上台阶 → 右转 → 上台阶 → 转回 → 上台阶
+    // Point 0 custom: 上台阶 → NAV to (3.0,1.41) → 右转 → 上台阶 → 转回 → 上台阶
     void handlePoint0Substep(const Zone2Task &task)
     {
         const double rx = task.rotate_x != 0.0 ? task.rotate_x : task.approach_x;
@@ -1615,11 +1615,15 @@ private:
 
         switch (zone2_point0_substep_)
         {
-        case 0: // NAV to (3.0,1.41)
+        case 0: // up_stairs #1
+            RCLCPP_INFO(get_logger(), "Point0 substep 0: UP_STAIRS #1");
+            startStairPublishing(1, StairContext::POINT0);
+            break;
+        case 1: // NAV to (3.0,1.41)
             if (point0_nav_sent_ || nav_chain_in_progress_)
                 return;
             point0_nav_sent_ = true;
-            RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f)", rx, ry);
+            RCLCPP_INFO(get_logger(), "Point0 substep 1: NAV→ (%.2f,%.2f)", rx, ry);
             sendNavigateWithQuat(rx, ry, 0, 0, 0, 0, 1,
                                  [this](bool success)
                                  {
@@ -1631,19 +1635,15 @@ private:
                                      }
                                      if (state_ == State::ZONE2_GRAB)
                                      {
-                                         zone2_point0_substep_ = 1;
+                                         zone2_point0_substep_ = 2;
                                          transitionTo(State::ZONE2_GRAB);
                                      }
                                  });
             break;
-        case 1: // up_stairs #1
-            RCLCPP_INFO(get_logger(), "Point0 substep 1: UP_STAIRS #1");
-            startStairPublishing(1, StairContext::POINT0);
-            break;
         case 2: // rotate right (-Y), rqz=-0.707
             if (nav_chain_in_progress_)
                 return;
-            RCLCPP_INFO(get_logger(), "Point0 substep 1: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
+            RCLCPP_INFO(get_logger(), "Point0 substep 2: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
                         task.rqx, task.rqy, task.rqz, task.rqw);
             sendNavigateWithQuat(
                 rx, ry, 0, task.rqx, task.rqy, task.rqz, task.rqw,
@@ -2185,7 +2185,7 @@ private:
     uint8_t zone2_grab_is_finsh_{0};
     double zone2_fixed_backoff_{0.1};
     bool zone2_post_rotate_stairs_done_{false}; // 旋转后再上台阶标记, 防止死循环
-    int zone2_point0_substep_{0};               // 点0自定义: 0=去旋转点, 1=上台阶1, 2=右转, 3=上台阶2, 4=左转, 5=上台阶3, 6=完成
+    int zone2_point0_substep_{0};               // 点0自定义: 0=上台阶1, 1=去旋转点, 2=右转, 3=上台阶2, 4=左转, 5=上台阶3, 6=完成
     bool zone2_point0_sequence_active_{false};
     bool point0_nav_sent_{false};
     GrabContext grab_context_{GrabContext::NONE};
