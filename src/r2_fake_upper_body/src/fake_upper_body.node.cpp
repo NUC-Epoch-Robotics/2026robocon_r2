@@ -75,19 +75,31 @@ private:
         {
             if (msg->status_bit == active_command_)
             {
-                // 相同命令: 只计数, 不打日志
                 ++dup_count_;
                 return;
             }
-            else
+            // cmd=0 (idle) 允许被 cmd=1/2 (台阶) 打断; 台阶之间也允许打断
+            if (active_command_ != 0 && msg->status_bit != 0)
             {
                 RCLCPP_WARN(
                     this->get_logger(),
                     "New command %d received while command %d still running, ignored",
                     msg->status_bit,
                     active_command_);
+                return;
             }
-            return;
+            if (active_command_ != 0)
+            {
+                RCLCPP_INFO(this->get_logger(),
+                    "Preempting cmd=%d → cmd=%d", active_command_, msg->status_bit);
+            }
+            // cancel current timer, accept new command
+            if (finish_timer_)
+            {
+                finish_timer_->cancel();
+                finish_timer_.reset();
+            }
+            command_in_progress_ = false;
         }
 
         if (dup_count_ > 0)
