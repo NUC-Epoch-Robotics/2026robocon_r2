@@ -59,14 +59,27 @@ enum class ButtonState : uint8_t
     ZONE3_RETRY = 4,
 };
 
+enum class GrabContext : uint8_t
+{
+    NONE = 0,
+    ENTRY = 1,
+    ZONE2_FIXED = 2,
+};
+
+enum class StairContext : uint8_t
+{
+    NORMAL = 0,
+    POINT0 = 1,
+};
+
 struct WaypointTask
 {
     int id;
     double x;
     double y;
     double z;
-    uint8_t arm_command{0};  // 该点要发的手臂指令, 0=IDLE
-    bool skip_dock{false};   // 非矛头点跳过对接
+    uint8_t arm_command{0}; // 该点要发的手臂指令, 0=IDLE
+    bool skip_dock{false};  // 非矛头点跳过对接
 };
 
 struct Zone2Task
@@ -88,10 +101,10 @@ struct Zone2Task
     double approach_y{0.0};
     uint8_t block_height{0};
     uint8_t stand_height{0};
-    uint8_t grab_scene;  // 1, 2, or 3
+    uint8_t grab_scene; // 1, 2, or 3
     uint8_t arm_command;
-    int8_t stair_cmd{0};  // 1=上, 2=下, 0=无
-    uint8_t grab_is_finsh{0};  // is_finsh for this grab
+    int8_t stair_cmd{0};      // 1=上, 2=下, 0=无
+    uint8_t grab_is_finsh{0}; // is_finsh for this grab
     double rotate_x{0.0};
     double rotate_y{0.0};
 };
@@ -101,7 +114,7 @@ struct Zone2BlockInfo
     double x;
     double y;
     double z;
-    uint8_t grab_scene;  // 1/2/3, 硬编码
+    uint8_t grab_scene; // 1/2/3, 硬编码
 };
 
 struct Zone2FixedPoint
@@ -121,9 +134,9 @@ struct Zone2FixedPoint
     // grab on forest
     double approach_x{0.0};
     double approach_y{0.0};
-    uint8_t block_height{0};  // target block height (1/2/3)
-    uint8_t stand_height{0};  // stand block height (1/2/3)
-    int8_t stair_cmd{0};      // 1=up, 2=down, 0=none
+    uint8_t block_height{0}; // target block height (1/2/3)
+    uint8_t stand_height{0}; // stand block height (1/2/3)
+    int8_t stair_cmd{0};     // 1=up, 2=down, 0=none
     double rotate_x{0.0};
     double rotate_y{0.0};
 };
@@ -163,6 +176,14 @@ public:
             "/juece_done", 10,
             std::bind(&R2DecisionNode::onUpperDone, this, _1));
 
+        up_juece_sub_ = create_subscription<robot_serial::msg::Juece>(
+            "up_juece", rclcpp::SensorDataQoS(),
+            std::bind(&R2DecisionNode::onUpJuece, this, _1));
+
+        down_juece_sub_ = create_subscription<robot_serial::msg::Juece>(
+            "down_juece", rclcpp::SensorDataQoS(),
+            std::bind(&R2DecisionNode::onDownJuece, this, _1));
+
         spear_exists_sub_ = create_subscription<std_msgs::msg::Bool>(
             "spearhead/exists", 10,
             std::bind(&R2DecisionNode::onSpearExists, this, _1));
@@ -192,10 +213,10 @@ public:
             this->declare_parameter<int>("zone1_arm_command", 0));
 
         // Zone1 矛头位置: 基准点 + (n-1)*间距 (6个矛头等距排列, 200mm)
-        double spearhead_base_x   = this->declare_parameter<double>("spearhead_base_x", 0.0);
-        double spearhead_base_y   = this->declare_parameter<double>("spearhead_base_y", 0.0);
+        double spearhead_base_x = this->declare_parameter<double>("spearhead_base_x", 0.0);
+        double spearhead_base_y = this->declare_parameter<double>("spearhead_base_y", 0.0);
         double spearhead_base_z = this->declare_parameter<double>("spearhead_base_z", 0.0);
-        double spearhead_spacing  = this->declare_parameter<double>("spearhead_spacing", 0.2);
+        double spearhead_spacing = this->declare_parameter<double>("spearhead_spacing", 0.2);
         for (int n = 1; n <= 6; ++n)
         {
             point_table_[n] = {n,
@@ -203,7 +224,7 @@ public:
                                spearhead_base_y,
                                spearhead_base_z,
                                zone1_arm_command_,
-                               false};  // 矛头点: 走抓取→对接流程
+                               false}; // 矛头点: 走抓取→对接流程
         }
 
         zone1_route_ids_ = this->declare_parameter<std::vector<int64_t>>(
@@ -215,13 +236,13 @@ public:
                            this->declare_parameter<double>("zone1_point_2_y", 0.0),
                            this->declare_parameter<double>("zone1_point_2_z", 0.0),
                            0,
-                           true};   // 上台阶前导航点, 不发手臂指令
+                           true}; // 上台阶前导航点, 不发手臂指令
         point_table_[8] = {8,
                            this->declare_parameter<double>("zone1_point_3_x", 0.0),
                            this->declare_parameter<double>("zone1_point_3_y", 0.0),
                            this->declare_parameter<double>("zone1_point_3_z", 0.0),
                            0,
-                           true};  // 下台阶前导航点, 不发手臂指令
+                           true}; // 下台阶前导航点, 不发手臂指令
 
         // R1 对接位置
         dock_r1_x_ = this->declare_parameter<double>("dock_r1_x", 0.0);
@@ -246,16 +267,16 @@ public:
             zone2_blocks_[idx].z = this->declare_parameter<double>(ps, 0.0);
         }
         // grab_scene 硬编码 (入口→出口, 从左到右)
-        zone2_blocks_[0].grab_scene  = 2;
-        zone2_blocks_[1].grab_scene  = 1;
-        zone2_blocks_[2].grab_scene  = 2;
-        zone2_blocks_[3].grab_scene  = 1;
-        zone2_blocks_[4].grab_scene  = 2;
-        zone2_blocks_[5].grab_scene  = 3;
-        zone2_blocks_[6].grab_scene  = 2;
-        zone2_blocks_[7].grab_scene  = 3;
-        zone2_blocks_[8].grab_scene  = 2;
-        zone2_blocks_[9].grab_scene  = 1;
+        zone2_blocks_[0].grab_scene = 2;
+        zone2_blocks_[1].grab_scene = 1;
+        zone2_blocks_[2].grab_scene = 2;
+        zone2_blocks_[3].grab_scene = 1;
+        zone2_blocks_[4].grab_scene = 2;
+        zone2_blocks_[5].grab_scene = 3;
+        zone2_blocks_[6].grab_scene = 2;
+        zone2_blocks_[7].grab_scene = 3;
+        zone2_blocks_[8].grab_scene = 2;
+        zone2_blocks_[9].grab_scene = 1;
         zone2_blocks_[10].grab_scene = 2;
         zone2_blocks_[11].grab_scene = 1;
 
@@ -271,9 +292,12 @@ public:
 
         // Zone2 固定路线 (6点, 硬编码台阶)
         use_fixed_zone2_route_ = this->declare_parameter<bool>("use_fixed_zone2_route", true);
+        zone2_fixed_backoff_ = this->declare_parameter<double>("zone2_fixed_backoff", 0.1);
         zone2_fixed_count_ = this->declare_parameter<int>("zone2_fixed_count", 6);
-        if (zone2_fixed_count_ < 0) zone2_fixed_count_ = 0;
-        if (zone2_fixed_count_ > kMaxZone2FixedPoints) zone2_fixed_count_ = kMaxZone2FixedPoints;
+        if (zone2_fixed_count_ < 0)
+            zone2_fixed_count_ = 0;
+        if (zone2_fixed_count_ > kMaxZone2FixedPoints)
+            zone2_fixed_count_ = kMaxZone2FixedPoints;
         for (int i = 0; i < kMaxZone2FixedPoints; ++i)
         {
             char px[32], py[32], pyaw[32], pqx[32], pqy[32], pqz[32], pqw[32];
@@ -290,13 +314,13 @@ public:
             snprintf(rqy, sizeof(rqy), "zone2_fixed_%d_rqy", i);
             snprintf(rqz, sizeof(rqz), "zone2_fixed_%d_rqz", i);
             snprintf(rqw, sizeof(rqw), "zone2_fixed_%d_rqw", i);
-            zone2_fixed_[i].x   = this->declare_parameter<double>(px, 0.0);
-            zone2_fixed_[i].y   = this->declare_parameter<double>(py, 0.0);
+            zone2_fixed_[i].x = this->declare_parameter<double>(px, 0.0);
+            zone2_fixed_[i].y = this->declare_parameter<double>(py, 0.0);
             zone2_fixed_[i].z = this->declare_parameter<double>(pyaw, 0.0);
-            zone2_fixed_[i].qx  = this->declare_parameter<double>(pqx, 0.0);
-            zone2_fixed_[i].qy  = this->declare_parameter<double>(pqy, 0.0);
-            zone2_fixed_[i].qz  = this->declare_parameter<double>(pqz, 0.0);
-            zone2_fixed_[i].qw  = this->declare_parameter<double>(pqw, 1.0);
+            zone2_fixed_[i].qx = this->declare_parameter<double>(pqx, 0.0);
+            zone2_fixed_[i].qy = this->declare_parameter<double>(pqy, 0.0);
+            zone2_fixed_[i].qz = this->declare_parameter<double>(pqz, 0.0);
+            zone2_fixed_[i].qw = this->declare_parameter<double>(pqw, 1.0);
             zone2_fixed_[i].use_rotate = this->declare_parameter<bool>(ruse, false);
             zone2_fixed_[i].rqx = this->declare_parameter<double>(rqx, 0.0);
             zone2_fixed_[i].rqy = this->declare_parameter<double>(rqy, 0.0);
@@ -308,8 +332,8 @@ public:
             snprintf(bth, sizeof(bth), "zone2_fixed_%d_block_height", i);
             snprintf(sth, sizeof(sth), "zone2_fixed_%d_stand_height", i);
             snprintf(stair, sizeof(stair), "zone2_fixed_%d_stair_cmd", i);
-            zone2_fixed_[i].approach_x   = this->declare_parameter<double>(appx, 0.0);
-            zone2_fixed_[i].approach_y   = this->declare_parameter<double>(appy, 0.0);
+            zone2_fixed_[i].approach_x = this->declare_parameter<double>(appx, 0.0);
+            zone2_fixed_[i].approach_y = this->declare_parameter<double>(appy, 0.0);
             zone2_fixed_[i].block_height = static_cast<uint8_t>(this->declare_parameter<int>(bth, 0));
             zone2_fixed_[i].stand_height = static_cast<uint8_t>(this->declare_parameter<int>(sth, 0));
             zone2_fixed_[i].stair_cmd = static_cast<int8_t>(
@@ -701,65 +725,37 @@ private:
                 entry_grab_step_ = 1;
                 sendNavigateWithQuat(
                     entry_approach_x_, block_y, 0.0, 0, 0, 0, 1,
-                    [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
+                    [this](bool)
+                    { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 return;
             }
 
-            // step 1: extend + wait 1s → nav forward to block
+            // step 1: open arm, move to block
             if (entry_grab_step_ == 1)
             {
-                if (entry_grab_phase_ != 3)
+                if (grab_context_ != GrabContext::ENTRY)
                 {
-                    RCLCPP_INFO(get_logger(), "EntryGrab step1: EXTEND is_finsh=%d, wait 1s", is_finsh);
-                    publishCmd(0, is_finsh);
-                    startEntryGrabTimer();
-                    return;
+                    RCLCPP_INFO(get_logger(), "EntryGrab step1: START is_finsh=%d, forward to block", is_finsh);
+                    startEntryGrabPublish(is_finsh);
+                    entry_grab_step_ = 2;
+                    sendNavigateWithQuat(
+                        block_x, block_y, 0.0, 0, 0, 0, 1,
+                        [this](bool)
+                        { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 }
-                RCLCPP_INFO(get_logger(), "EntryGrab step1: nav forward → (%.2f,%.2f)", block_x, block_y);
-                entry_grab_step_ = 2;
-                sendNavigateWithQuat(
-                    block_x, block_y, 0.0, 0, 0, 0, 1,
-                    [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
                 return;
             }
 
-            // step 2: 吸住, 等 15s 再倒车
+            // step 2: wait for up_juece done
             if (entry_grab_step_ == 2)
-            {
-                RCLCPP_INFO(get_logger(), "EntryGrab step2: grabbed, wait 15s before reverse");
-                entry_grab_phase_ = 1;
-                entry_grab_phase_start_ = now();
-                entry_grab_step_ = 3;
                 return;
-            }
 
-            // step 3: 倒车回 approach (15s 已过才进入 nav)
+            // step 3: retreat to approach, then finish
             if (entry_grab_step_ == 3)
             {
-                if (entry_grab_phase_ == 1)
-                    return;  // 还在等 15s
-                RCLCPP_INFO(get_logger(), "EntryGrab step3: REVERSE → (%.2f,%.2f)", entry_approach_x_, block_y);
-                entry_grab_step_ = 4;
-                sendNavigateWithQuat(
-                    entry_approach_x_, block_y, 0.0, 0, 0, 0, 1,
-                    [this](bool) { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
-                return;
-            }
-
-            // step 4: 收回
-            if (entry_grab_step_ == 4)
-            {
-                RCLCPP_INFO(get_logger(), "EntryGrab step4: RETRACT");
-                entry_grab_phase_ = 2;
-                entry_grab_phase_start_ = now();
-                entry_grab_step_ = 5;
-                return;
-            }
-
-            // step 5: 收回完成, 进 Zone2
-            if (entry_grab_step_ == 5)
-            {
-                RCLCPP_INFO(get_logger(), "EntryGrab done, entering forest");
+                RCLCPP_INFO(get_logger(), "EntryGrab step3: retreat done, retract and continue");
+                stopEntryGrabPublish();
+                entry_grab_step_ = 0;
                 transitionTo(State::ZONE2_NAV_POINT);
                 return;
             }
@@ -889,88 +885,33 @@ private:
 
             if (use_fixed_zone2_route_)
             {
-                // 固定路线: 和入口抓取相同流程 (伸臂→前进→吸住→等15s→倒车→收回)
-                // step 0: extend + wait 1s
-                if (zone2_grab_step_ == 0)
+                if (task.id == 0 && zone2_point0_sequence_active_)
                 {
-                    if (zone2_grab_phase_ != 3)
+                    handlePoint0Substep(task);
+                    return;
+                }
+                if (grab_context_ != GrabContext::ZONE2_FIXED)
+                {
+                    if (zone2_grab_step_ == 0)
                     {
-                        RCLCPP_INFO(get_logger(), "Zone2Grab point %d: EXTEND is_finsh=%d, wait 1s", task.id, task.grab_is_finsh);
-                        publishCmd(0, task.grab_is_finsh);
-                        startZone2GrabTimer();
+                        const double yaw = yawFromQuat(task.qx, task.qy, task.qz, task.qw);
+                        const double backoff_x = task.approach_x - std::cos(yaw) * zone2_fixed_backoff_;
+                        const double backoff_y = task.approach_y - std::sin(yaw) * zone2_fixed_backoff_;
+                        RCLCPP_INFO(get_logger(), "Zone2Grab point %d: backoff to (%.2f,%.2f)",
+                                    task.id, backoff_x, backoff_y);
+                        zone2_grab_step_ = 1;
+                        sendNavigateWithQuat(
+                            backoff_x, backoff_y, 0.0, task.qx, task.qy, task.qz, task.qw,
+                            [this](bool)
+                            { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
                         return;
                     }
-                    // 1s到, 前进
-                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav forward → (%.2f,%.2f)", task.id, task.x, task.y);
-                    zone2_grab_step_ = 1;
-                    sendNavigateWithQuat(
-                        task.x, task.y, 0.0, 0, 0, 0, 1,
-                        [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
-                    return;
-                }
-
-                // step 1: 吸住, 等 15s
-                if (zone2_grab_step_ == 1)
-                {
-                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: grabbed, wait 15s", task.id);
-                    zone2_grab_phase_ = 1;
-                    zone2_grab_phase_start_ = now();
-                    zone2_grab_step_ = 2;
-                    return;
-                }
-
-                // step 2: 倒车回 approach
-                if (zone2_grab_step_ == 2)
-                {
-                    if (zone2_grab_phase_ == 1)
-                        return;  // 还在等 15s
-                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: REVERSE → (%.2f,%.2f)", task.id, task.approach_x, task.approach_y);
-                    zone2_grab_step_ = 3;
-                    sendNavigateWithQuat(
-                        task.approach_x, task.approach_y, 0.0, 0, 0, 0, 1,
-                        [this](bool) { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
-                    return;
-                }
-
-                // step 3: 收回
-                if (zone2_grab_step_ == 3)
-                {
-                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: RETRACT", task.id);
-                    zone2_grab_phase_ = 2;
-                    zone2_grab_phase_start_ = now();
-                    zone2_grab_step_ = 4;
-                    return;
-                }
-
-                // step 4: (point 0: 上台阶→右转→上台阶→左转→上台阶) or (other: nav to block center)
-                if (zone2_grab_step_ == 4)
-                {
-                    if (task.id == 0)
+                    if (zone2_grab_step_ == 1)
                     {
-                        handlePoint0Substep(task);
-                        return;
+                        RCLCPP_INFO(get_logger(), "Zone2Grab point %d: START is_finsh=%d", task.id, task.grab_is_finsh);
+                        startZone2GrabPublish(task.grab_is_finsh);
+                        zone2_grab_step_ = 2;
                     }
-                    RCLCPP_INFO(get_logger(), "Zone2Grab point %d: nav to block center (%.2f,%.2f)", task.id, task.x, task.y);
-                    zone2_grab_step_ = 0;  // reset for next grab
-                    sendNavigateWithQuat(
-                        task.x, task.y, 0.0, 0, 0, 0, 1,
-                        [this](bool success)
-                        {
-                            if (!success)
-                                RCLCPP_WARN(get_logger(), "Zone2: nav to block after grab failed");
-                            if (state_ != State::ZONE2_GRAB)
-                                return;
-                            const auto &t = zone2_tasks_[current_zone2_index_];
-                            if (t.stair_cmd == 1)
-                                transitionTo(State::ZONE2_UP_STAIRS);
-                            else if (t.stair_cmd == 2)
-                                transitionTo(State::ZONE2_DOWN_STAIRS);
-                            else if (t.use_rotate)
-                                transitionTo(State::ZONE2_ROTATE);
-                            else
-                                transitionTo(State::ZONE2_FINISH);
-                        });
-                    return;
                 }
                 return;
             }
@@ -1051,22 +992,22 @@ private:
 
     // 四连通邻接表
     static constexpr int ADJ[12][4] = {
-        {1, 3, -1, -1},     // 0
-        {0, 2, 4, -1},      // 1
-        {1, 5, -1, -1},     // 2
-        {0, 4, 6, -1},      // 3
-        {1, 3, 5, 7},       // 4
-        {2, 4, 8, -1},      // 5
-        {3, 7, 9, -1},      // 6
-        {4, 6, 8, 10},      // 7
-        {5, 7, 11, -1},     // 8
-        {6, 10, -1, -1},    // 9
-        {7, 9, 11, -1},     // 10
-        {8, 10, -1, -1},    // 11
+        {1, 3, -1, -1},  // 0
+        {0, 2, 4, -1},   // 1
+        {1, 5, -1, -1},  // 2
+        {0, 4, 6, -1},   // 3
+        {1, 3, 5, 7},    // 4
+        {2, 4, 8, -1},   // 5
+        {3, 7, 9, -1},   // 6
+        {4, 6, 8, 10},   // 7
+        {5, 7, 11, -1},  // 8
+        {6, 10, -1, -1}, // 9
+        {7, 9, 11, -1},  // 10
+        {8, 10, -1, -1}, // 11
     };
 
     static bool is_entry_block(int idx) { return idx == 0 || idx == 1 || idx == 2; }
-    static bool is_exit_block(int idx)  { return idx == 9 || idx == 10 || idx == 11; }
+    static bool is_exit_block(int idx) { return idx == 9 || idx == 10 || idx == 11; }
 
     void buildZone2FixedRoute()
     {
@@ -1100,10 +1041,14 @@ private:
             if (t.approach_x != 0.0 || t.approach_y != 0.0)
             {
                 int dh = static_cast<int>(t.block_height) - static_cast<int>(t.stand_height);
-                if (dh == 1)      t.grab_is_finsh = 1;
-                else if (dh == 2) t.grab_is_finsh = 2;
-                else if (dh < 0)  t.grab_is_finsh = 3;
-                else              t.grab_is_finsh = 0;
+                if (dh == 1)
+                    t.grab_is_finsh = 1;
+                else if (dh == 2)
+                    t.grab_is_finsh = 2;
+                else if (dh < 0)
+                    t.grab_is_finsh = 3;
+                else
+                    t.grab_is_finsh = 0;
             }
 
             // 计算与下个点的高度差决定台阶方向
@@ -1114,11 +1059,11 @@ private:
             else if (i + 1 < zone2_fixed_count_)
             {
                 double dz = zone2_fixed_[i + 1].z - zone2_fixed_[i].z;
-                t.stair_cmd = (dz > 0) ? 1 : 2;  // 正=上, 负=下
+                t.stair_cmd = (dz > 0) ? 1 : 2; // 正=上, 负=下
             }
             else
             {
-                t.stair_cmd = 0;  // 最后一个点, 无台阶
+                t.stair_cmd = 0; // 最后一个点, 无台阶
             }
 
             zone2_tasks_.push_back(t);
@@ -1129,10 +1074,10 @@ private:
         {
             const auto &t = zone2_tasks_[i];
             RCLCPP_INFO(get_logger(),
-                "  #%zu (%.2f,%.2f) z=%.3f stair=%d app=(%.2f,%.2f) "
-                "h_stand=%d h_block=%d is_finsh=%d rot=%d",
-                i, t.x, t.y, t.z, t.stair_cmd, t.approach_x, t.approach_y,
-                t.stand_height, t.block_height, t.grab_is_finsh, t.use_rotate);
+                        "  #%zu (%.2f,%.2f) z=%.3f stair=%d app=(%.2f,%.2f) "
+                        "h_stand=%d h_block=%d is_finsh=%d rot=%d",
+                        i, t.x, t.y, t.z, t.stair_cmd, t.approach_x, t.approach_y,
+                        t.stand_height, t.block_height, t.grab_is_finsh, t.use_rotate);
         }
     }
 
@@ -1146,7 +1091,7 @@ private:
             RCLCPP_WARN(get_logger(),
                         "buildZone2Route: no lightboard data (size=%zu), Zone2 skipped",
                         lightboard_map.size());
-            return;  // zone2_tasks_ 留空, ZONE1_FINISH → DONE
+            return; // zone2_tasks_ 留空, ZONE1_FINISH → DONE
         }
 
         // ── 1. 收集 R2 目标方块 & 构建可通过性 ──────────────
@@ -1192,7 +1137,8 @@ private:
                 for (int ni = 0; ni < 4; ++ni)
                 {
                     int nb = ADJ[cur][ni];
-                    if (nb < 0) continue;
+                    if (nb < 0)
+                        continue;
                     if (dist[nb] < 0 && passable[nb])
                     {
                         dist[nb] = dist[cur] + 1;
@@ -1208,10 +1154,11 @@ private:
                   [&](int a, int b)
                   {
                       bool ae = is_entry_block(a), be = is_entry_block(b);
-                      if (ae != be) return ae > be;   // 入口方块优先
+                      if (ae != be)
+                          return ae > be; // 入口方块优先
                       if (dist[a] != dist[b])
-                          return dist[a] < dist[b];   // 距离近的优先
-                      return a < b;                    // 同距离按索引
+                          return dist[a] < dist[b]; // 距离近的优先
+                      return a < b;                 // 同距离按索引
                   });
 
         // ── 5. 检查不可达方块 ────────────────────────────────
@@ -1231,7 +1178,7 @@ private:
         for (int target : r2_targets)
         {
             if (dist[target] < 0)
-                continue;   // 不可达, 跳过
+                continue; // 不可达, 跳过
 
             // 找到从 current_pos 到 target 的路径上的第一个中间方块
             // (BFS 路径反推, 简单场景下直接取 target 的 BFS 前驱)
@@ -1242,7 +1189,7 @@ private:
                 plan.push_back(step);
             }
             plan.push_back(target);
-            passable[target] = true;   // KFS 取走后该方块变为完全可通过
+            passable[target] = true; // KFS 取走后该方块变为完全可通过
             current_pos = target;
         }
 
@@ -1252,7 +1199,7 @@ private:
             if (current_pos < 0)
             {
                 // 还在入口区 — 只有入口方块有 KFS 且已取完的情况
-                exit_reachable = true;  // 从入口区可直接到出口方块
+                exit_reachable = true; // 从入口区可直接到出口方块
             }
             else
             {
@@ -1297,9 +1244,9 @@ private:
         int task_idx = 0;
         for (const auto &t : zone2_tasks_)
         {
-            const char *pos = is_entry_block(t.id) ? "[ENTRY]"
-                            : is_exit_block(t.id) ? "[EXIT]"
-                            : "";
+            const char *pos = is_entry_block(t.id)  ? "[ENTRY]"
+                              : is_exit_block(t.id) ? "[EXIT]"
+                                                    : "";
             RCLCPP_INFO(get_logger(), "  #%d block %d %s (%.2f,%.2f) scene=%d cmd=%d",
                         task_idx++, t.id, pos, t.x, t.y, t.grab_scene, t.arm_command);
         }
@@ -1313,7 +1260,7 @@ private:
     {
         // 入口区: target 是入口方块时, step = -1 (从入口区直接拿)
         if (pos < 0 && is_entry_block(target))
-            return -1;   // 从入口区直接伸手
+            return -1; // 从入口区直接伸手
 
         // BFS 反推: 从 target 往回找, 直到碰到 pos
         int prev[12];
@@ -1341,38 +1288,47 @@ private:
         while (head < tail)
         {
             int cur = queue[head++];
-            if (cur == target) { found = true; break; }
+            if (cur == target)
+            {
+                found = true;
+                break;
+            }
             for (int ni = 0; ni < 4; ++ni)
             {
                 int nb = ADJ[cur][ni];
-                if (nb < 0 || prev[nb] >= -1 || !passable[nb]) continue;
+                if (nb < 0 || prev[nb] >= -1 || !passable[nb])
+                    continue;
                 prev[nb] = cur;
                 queue[tail++] = nb;
             }
         }
 
-        if (!found) return target;   // 直接给 target
+        if (!found)
+            return target; // 直接给 target
 
         // 沿 prev 链回退, 找到 target 的前驱
         int step = target;
         while (prev[step] >= 0)
             step = prev[step];
 
-        return step;   // 从 pos 出发的第一步
+        return step; // 从 pos 出发的第一步
     }
 
     static bool isAdjacent(int a, int b)
     {
-        if (b < 0) return is_entry_block(a);
+        if (b < 0)
+            return is_entry_block(a);
         for (int ni = 0; ni < 4; ++ni)
-            if (ADJ[a][ni] == b) return true;
+            if (ADJ[a][ni] == b)
+                return true;
         return false;
     }
 
     static bool isAlreadyPlanned(const std::vector<int> &plan, int idx)
     {
         for (int p : plan)
-            if (p == idx) return true;
+            if (p == idx)
+                return true;
         return false;
     }
 
@@ -1381,6 +1337,47 @@ private:
         // TODO: 抓取指令待硬件确定后映射
         (void)scene;
         return 0;
+    }
+
+    static double yawFromQuat(double qx, double qy, double qz, double qw)
+    {
+        const double siny_cosp = 2.0 * (qw * qz + qx * qy);
+        const double cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+        return std::atan2(siny_cosp, cosy_cosp);
+    }
+
+    static uint8_t orientationFromQuat(double qx, double qy, double qz, double qw)
+    {
+        const double yaw = yawFromQuat(qx, qy, qz, qw);
+        const double kPi = 3.14159265358979323846;
+        const double kHalfPi = kPi * 0.5;
+        const auto angleDiff = [](double a, double b)
+        {
+            return std::atan2(std::sin(a - b), std::cos(a - b));
+        };
+
+        const double d0 = std::fabs(angleDiff(yaw, 0.0));
+        const double dPosY = std::fabs(angleDiff(yaw, kHalfPi));
+        const double dNegY = std::fabs(angleDiff(yaw, -kHalfPi));
+        const double dNegX = std::fabs(angleDiff(yaw, kPi));
+
+        uint8_t state = 0; // +X
+        double best = d0;
+        if (dPosY < best)
+        {
+            best = dPosY;
+            state = 1; // +Y
+        }
+        if (dNegY < best)
+        {
+            best = dNegY;
+            state = 2; // -Y
+        }
+        if (dNegX < best)
+        {
+            state = 3; // -X
+        }
+        return state;
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -1429,11 +1426,13 @@ private:
         {
             RCLCPP_INFO(get_logger(), "NavigateToPose %s", gh ? "ACCEPTED" : "REJECTED");
         };
-        options.result_callback = [this, on_done](const GoalHandleNavigateToPose::WrappedResult &r)
+        options.result_callback = [this, on_done, qx, qy, qz, qw](const GoalHandleNavigateToPose::WrappedResult &r)
         {
             bool ok = (r.code == rclcpp_action::ResultCode::SUCCEEDED);
             RCLCPP_INFO(get_logger(), "NAV done: %s", ok ? "OK" : "FAIL");
             nav_chain_in_progress_ = false;
+            if (ok)
+                orientation_state_ = orientationFromQuat(qx, qy, qz, qw);
             on_done(ok);
         };
         nav_to_pose_client_->async_send_goal(goal, options);
@@ -1490,14 +1489,15 @@ private:
     }
 
     // ═════════════════════════════════════════════════════════════
-    // 上/下台阶: 10Hz 直接发布, 先0后目标cmd, 不用ACK/DONE
+    // 上/下台阶: 10Hz 持续发布, 等待 down_juece 完成
     // ═════════════════════════════════════════════════════════════
 
-    void startStairPublishing(uint8_t target_cmd)
+    void startStairPublishing(uint8_t target_cmd, StairContext context = StairContext::NORMAL)
     {
         stair_target_cmd_ = target_cmd;
+        stair_context_ = context;
         stair_phase_ = 0;
-        stair_phase_start_ = now();
+        stair_waiting_done_ = true;
         stair_timer_ = create_wall_timer(
             std::chrono::milliseconds(100),
             std::bind(&R2DecisionNode::tickStair, this));
@@ -1505,63 +1505,33 @@ private:
 
     void tickStair()
     {
-        auto elapsed = (now() - stair_phase_start_).seconds();
-
         if (stair_phase_ == 0)
         {
             publishCmd(0);
-            if (elapsed >= 0.5)
-            {
-                stair_phase_ = 1;
-                stair_phase_start_ = now();
-            }
+            stair_phase_ = 1;
         }
         else
         {
             publishCmd(stair_target_cmd_);
-            if (elapsed >= 0.5)
-            {
-                stair_timer_->cancel();
-                stair_timer_.reset();
-                RCLCPP_INFO(get_logger(), "Stair: cmd=%d done", stair_target_cmd_);
-
-                if (state_ == State::ZONE1_UP_STAIRS)
-                    transitionTo(State::ZONE1_DOWN_STAIRS);
-                else if (state_ == State::ZONE1_DOWN_STAIRS)
-                    transitionTo(State::ZONE1_FINISH);
-                else if (state_ == State::ZONE2_UP_STAIRS || state_ == State::ZONE2_DOWN_STAIRS)
-                {
-                    if (zone2_post_rotate_stairs_done_)
-                    {
-                        zone2_post_rotate_stairs_done_ = false;
-                        ++current_zone2_index_;
-                        transitionTo(State::ZONE2_NAV_POINT);
-                    }
-                    else
-                    {
-                        const auto &t = zone2_tasks_[current_zone2_index_];
-                        if (t.use_rotate)
-                            transitionTo(State::ZONE2_ROTATE);
-                        else
-                        {
-                            ++current_zone2_index_;
-                            transitionTo(State::ZONE2_NAV_POINT);
-                        }
-                    }
-                }
-            }
         }
     }
 
-    void startEntryGrabTimer()
+    void stopStairPublishing()
     {
-        if (entry_grab_timer_)
+        if (stair_timer_)
         {
-            entry_grab_timer_->cancel();
-            entry_grab_timer_.reset();
+            stair_timer_->cancel();
+            stair_timer_.reset();
         }
-        entry_grab_phase_ = 0;
-        entry_grab_phase_start_ = now();
+        stair_waiting_done_ = false;
+        publishCmd(0);
+    }
+
+    void startEntryGrabPublish(uint8_t is_finsh)
+    {
+        stopEntryGrabPublish();
+        entry_grab_is_finsh_ = is_finsh;
+        grab_context_ = GrabContext::ENTRY;
         entry_grab_timer_ = create_wall_timer(
             std::chrono::milliseconds(100),
             std::bind(&R2DecisionNode::tickEntryGrab, this));
@@ -1569,56 +1539,24 @@ private:
 
     void tickEntryGrab()
     {
-        // 10Hz 持续发布当前指令
-        if (entry_grab_phase_ == 0 || entry_grab_phase_ == 1 || entry_grab_phase_ == 3)
-        {
-            // 阶段0: 伸出等1s / 阶段1: 吸住等15s / 阶段3: nav中保持伸出
-            publishCmd(0, entry_block0_is_finsh_);
-        }
-        else
-        {
-            // 阶段2: 收回
-            publishCmd(0, 0);
-        }
-
-        auto elapsed = (now() - entry_grab_phase_start_).seconds();
-
-        if (entry_grab_phase_ == 0 && elapsed >= 1.0)
-        {
-            // 1s 到 → 前进抓块
-            entry_grab_phase_ = 3;
-            entry_grab_phase_start_ = now();
-            if (state_ == State::ZONE2_ENTRY_GRAB)
-                transitionTo(State::ZONE2_ENTRY_GRAB);
-        }
-        else if (entry_grab_phase_ == 1 && elapsed >= 15.0)
-        {
-            // 15s 到 → 倒车
-            entry_grab_phase_ = 3;
-            entry_grab_phase_start_ = now();
-            if (state_ == State::ZONE2_ENTRY_GRAB)
-                transitionTo(State::ZONE2_ENTRY_GRAB);
-        }
-        else if (entry_grab_phase_ == 2 && elapsed >= 0.5)
-        {
-            // 收回完成
-            entry_grab_timer_->cancel();
-            entry_grab_timer_.reset();
-            RCLCPP_INFO(get_logger(), "EntryGrab: grab sequence complete");
-            if (state_ == State::ZONE2_ENTRY_GRAB)
-                transitionTo(State::ZONE2_ENTRY_GRAB);
-        }
+        publishCmd(0, entry_grab_is_finsh_);
     }
 
-    void startZone2GrabTimer()
+    void stopEntryGrabPublish()
     {
-        if (zone2_grab_timer_)
+        if (entry_grab_timer_)
         {
-            zone2_grab_timer_->cancel();
-            zone2_grab_timer_.reset();
+            entry_grab_timer_->cancel();
+            entry_grab_timer_.reset();
         }
-        zone2_grab_phase_ = 0;
-        zone2_grab_phase_start_ = now();
+        publishCmd(0, 0);
+    }
+
+    void startZone2GrabPublish(uint8_t is_finsh)
+    {
+        stopZone2GrabPublish();
+        zone2_grab_is_finsh_ = is_finsh;
+        grab_context_ = GrabContext::ZONE2_FIXED;
         zone2_grab_timer_ = create_wall_timer(
             std::chrono::milliseconds(100),
             std::bind(&R2DecisionNode::tickZone2Grab, this));
@@ -1626,49 +1564,17 @@ private:
 
     void tickZone2Grab()
     {
-        const auto &task = zone2_tasks_[current_zone2_index_];
+        publishCmd(0, zone2_grab_is_finsh_);
+    }
 
-        if (zone2_grab_phase_ == 7)
-            publishCmd(1);      // status_bit=1 stairs up (point0 custom)
-        else if (zone2_grab_phase_ == 0 || zone2_grab_phase_ == 1 || zone2_grab_phase_ == 3)
-            publishCmd(0, task.grab_is_finsh);
-        else
-            publishCmd(0, 0);
-
-        auto elapsed = (now() - zone2_grab_phase_start_).seconds();
-
-        // Point 0 custom: up_stairs (phase 7 → advance substep)
-        if (zone2_grab_phase_ == 7 && elapsed >= 0.5)
+    void stopZone2GrabPublish()
+    {
+        if (zone2_grab_timer_)
         {
             zone2_grab_timer_->cancel();
             zone2_grab_timer_.reset();
-            ++zone2_point0_substep_;
-            if (state_ == State::ZONE2_GRAB)
-                transitionTo(State::ZONE2_GRAB);
         }
-        // Normal grab phases
-        else if (zone2_grab_phase_ == 0 && elapsed >= 1.0)
-        {
-            zone2_grab_phase_ = 3;
-            zone2_grab_phase_start_ = now();
-            if (state_ == State::ZONE2_GRAB)
-                transitionTo(State::ZONE2_GRAB);
-        }
-        else if (zone2_grab_phase_ == 1 && elapsed >= 15.0)
-        {
-            zone2_grab_phase_ = 3;
-            zone2_grab_phase_start_ = now();
-            if (state_ == State::ZONE2_GRAB)
-                transitionTo(State::ZONE2_GRAB);
-        }
-        else if (zone2_grab_phase_ == 2 && elapsed >= 0.5)
-        {
-            zone2_grab_timer_->cancel();
-            zone2_grab_timer_.reset();
-            RCLCPP_INFO(get_logger(), "Zone2Grab: sequence complete");
-            if (state_ == State::ZONE2_GRAB)
-                transitionTo(State::ZONE2_GRAB);
-        }
+        publishCmd(0, 0);
     }
 
     // Point 0 custom: NAV to (3.0,1.41) 与上台阶并发 → 右转 → 上台阶 → 转回 → 上台阶
@@ -1679,56 +1585,59 @@ private:
 
         switch (zone2_point0_substep_)
         {
-        case 0:  // NAV to (3.0,1.41) + UP_STAIRS #1 并发
+        case 0: // NAV to (3.0,1.41) + UP_STAIRS #1 并发
             RCLCPP_INFO(get_logger(), "Point0 substep 0: NAV→ (%.2f,%.2f) + UP_STAIRS #1", rx, ry);
             sendNavigateWithQuat(rx, ry, 0, 0, 0, 0, 1,
-                [this](bool success) {
-                    if (!success)
-                        RCLCPP_WARN(get_logger(), "Point0: NAV to rotate point failed");
-                });
-            startZone2GrabTimer();
-            zone2_grab_phase_ = 7;  // phase 7 done → ++substep → case 1
+                                 [this](bool success)
+                                 {
+                                     if (!success)
+                                         RCLCPP_WARN(get_logger(), "Point0: NAV to rotate point failed");
+                                 });
+            startStairPublishing(1, StairContext::POINT0);
             break;
-        case 1:  // rotate right (-Y), rqz=-0.707
+        case 1: // rotate right (-Y), rqz=-0.707
             RCLCPP_INFO(get_logger(), "Point0 substep 1: ROTATE right (%.3f,%.3f,%.3f,%.3f)",
                         task.rqx, task.rqy, task.rqz, task.rqw);
             sendNavigateWithQuat(
                 rx, ry, 0, task.rqx, task.rqy, task.rqz, task.rqw,
-                [this](bool success) {
+                [this](bool success)
+                {
                     if (!success)
                         RCLCPP_WARN(get_logger(), "Point0: rotate right NAV failed");
-                    if (state_ == State::ZONE2_GRAB) {
+                    if (state_ == State::ZONE2_GRAB)
+                    {
                         zone2_point0_substep_ = 2;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 2:  // up_stairs #2
+        case 2: // up_stairs #2
             RCLCPP_INFO(get_logger(), "Point0 substep 2: UP_STAIRS #2");
-            startZone2GrabTimer();
-            zone2_grab_phase_ = 7;  // phase 7 done → ++substep → case 3
+            startStairPublishing(1, StairContext::POINT0);
             break;
-        case 3:  // rotate back (+X), qz=0
+        case 3: // rotate back (+X), qz=0
             RCLCPP_INFO(get_logger(), "Point0 substep 3: ROTATE back (%.3f,%.3f,%.3f,%.3f)",
                         task.qx, task.qy, task.qz, task.qw);
             sendNavigateWithQuat(
                 rx, ry, 0, task.qx, task.qy, task.qz, task.qw,
-                [this](bool success) {
+                [this](bool success)
+                {
                     if (!success)
                         RCLCPP_WARN(get_logger(), "Point0: rotate back NAV failed");
-                    if (state_ == State::ZONE2_GRAB) {
+                    if (state_ == State::ZONE2_GRAB)
+                    {
                         zone2_point0_substep_ = 4;
                         transitionTo(State::ZONE2_GRAB);
                     }
                 });
             break;
-        case 4:  // up_stairs #3
+        case 4: // up_stairs #3
             RCLCPP_INFO(get_logger(), "Point0 substep 4: UP_STAIRS #3");
-            startZone2GrabTimer();
-            zone2_grab_phase_ = 7;  // phase 7 done → ++substep → case 5
+            startStairPublishing(1, StairContext::POINT0);
             break;
-        case 5:  // done
+        case 5: // done
             RCLCPP_INFO(get_logger(), "Point0 all substeps done, advance");
+            zone2_point0_sequence_active_ = false;
             zone2_point0_substep_ = 0;
             ++current_zone2_index_;
             transitionTo(State::ZONE2_NAV_POINT);
@@ -1907,6 +1816,90 @@ private:
         }
     }
 
+    void onUpJuece(const robot_serial::msg::Juece::SharedPtr msg)
+    {
+        if (msg->zhuangtai != 1 || grab_context_ == GrabContext::NONE)
+            return;
+
+        if (grab_context_ == GrabContext::ENTRY)
+        {
+            grab_context_ = GrabContext::NONE;
+            entry_grab_step_ = 3;
+            RCLCPP_INFO(get_logger(), "EntryGrab: done (up_juece), retreat to approach");
+            sendNavigateWithQuat(
+                entry_approach_x_, entry_block0_y_, 0.0, 0, 0, 0, 1,
+                [this](bool)
+                { if (state_ == State::ZONE2_ENTRY_GRAB) transitionTo(State::ZONE2_ENTRY_GRAB); });
+            return;
+        }
+
+        if (grab_context_ == GrabContext::ZONE2_FIXED)
+        {
+            stopZone2GrabPublish();
+            grab_context_ = GrabContext::NONE;
+            zone2_grab_step_ = 0;
+            const auto &task = zone2_tasks_[current_zone2_index_];
+            if (task.id == 0)
+            {
+                zone2_point0_sequence_active_ = true;
+                zone2_point0_substep_ = 0;
+                handlePoint0Substep(task);
+                return;
+            }
+
+            if (task.stair_cmd == 1)
+                transitionTo(State::ZONE2_UP_STAIRS);
+            else if (task.stair_cmd == 2)
+                transitionTo(State::ZONE2_DOWN_STAIRS);
+            else if (task.use_rotate)
+                transitionTo(State::ZONE2_ROTATE);
+            else
+                transitionTo(State::ZONE2_FINISH);
+        }
+    }
+
+    void onDownJuece(const robot_serial::msg::Juece::SharedPtr msg)
+    {
+        if (msg->zhuangtai != 1 || !stair_waiting_done_)
+            return;
+
+        stopStairPublishing();
+        RCLCPP_INFO(get_logger(), "Stair done (down_juece), cmd=%d", stair_target_cmd_);
+
+        if (stair_context_ == StairContext::POINT0)
+        {
+            ++zone2_point0_substep_;
+            if (state_ == State::ZONE2_GRAB)
+                transitionTo(State::ZONE2_GRAB);
+            return;
+        }
+
+        if (state_ == State::ZONE1_UP_STAIRS)
+            transitionTo(State::ZONE1_DOWN_STAIRS);
+        else if (state_ == State::ZONE1_DOWN_STAIRS)
+            transitionTo(State::ZONE1_FINISH);
+        else if (state_ == State::ZONE2_UP_STAIRS || state_ == State::ZONE2_DOWN_STAIRS)
+        {
+            if (zone2_post_rotate_stairs_done_)
+            {
+                zone2_post_rotate_stairs_done_ = false;
+                ++current_zone2_index_;
+                transitionTo(State::ZONE2_NAV_POINT);
+            }
+            else
+            {
+                const auto &t = zone2_tasks_[current_zone2_index_];
+                if (t.use_rotate)
+                    transitionTo(State::ZONE2_ROTATE);
+                else
+                {
+                    ++current_zone2_index_;
+                    transitionTo(State::ZONE2_NAV_POINT);
+                }
+            }
+        }
+    }
+
     void onSpearExists(const std_msgs::msg::Bool::SharedPtr msg)
     {
         spearhead_exists_ = msg->data;
@@ -1939,10 +1932,22 @@ private:
         last_button_event_time_ = now_time;
         const auto button = static_cast<ButtonState>(msg->data);
 
-        if (button == ButtonState::START)       { pending_start_ = true; }
-        if (button == ButtonState::ZONE1_RETRY) { pending_zone1_retry_ = true; }
-        if (button == ButtonState::ZONE2_RETRY) { pending_zone2_retry_ = true; }
-        if (button == ButtonState::ZONE3_RETRY) { pending_zone3_retry_ = true; }
+        if (button == ButtonState::START)
+        {
+            pending_start_ = true;
+        }
+        if (button == ButtonState::ZONE1_RETRY)
+        {
+            pending_zone1_retry_ = true;
+        }
+        if (button == ButtonState::ZONE2_RETRY)
+        {
+            pending_zone2_retry_ = true;
+        }
+        if (button == ButtonState::ZONE3_RETRY)
+        {
+            pending_zone3_retry_ = true;
+        }
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -1951,7 +1956,8 @@ private:
 
     void publishSpearEnable(bool enable)
     {
-        if (spear_camera_enabled_ == enable) return;
+        if (spear_camera_enabled_ == enable)
+            return;
         std_msgs::msg::Bool msg;
         msg.data = enable;
         spear_enable_pub_->publish(msg);
@@ -1961,7 +1967,8 @@ private:
 
     void publishLightboardEnable(bool enable)
     {
-        if (lightboard_enabled_ == enable) return;
+        if (lightboard_enabled_ == enable)
+            return;
         std_msgs::msg::Bool msg;
         msg.data = enable;
         lightboard_enable_pub_->publish(msg);
@@ -1971,7 +1978,8 @@ private:
 
     void publishGrabSceneEnable(bool enable)
     {
-        if (grab_scene_enabled_ == enable) return;
+        if (grab_scene_enabled_ == enable)
+            return;
         std_msgs::msg::Bool msg;
         msg.data = enable;
         grab_scene_enable_pub_->publish(msg);
@@ -2011,6 +2019,8 @@ private:
     // ── subscriptions ───────────────────────────────────────────
     rclcpp::Subscription<r2_interfaces::msg::ArmAck>::SharedPtr upper_ack_sub_;
     rclcpp::Subscription<r2_interfaces::msg::ArmDone>::SharedPtr upper_done_sub_;
+    rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr up_juece_sub_;
+    rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr down_juece_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr spear_exists_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;
@@ -2060,6 +2070,7 @@ private:
     bool grab_scene_ready_{false};
 
     bool nav_chain_in_progress_{false};
+    uint8_t orientation_state_{0}; // 0:+X, 1:+Y, 2:-Y, 3:-X
 
     // Zone1 dock
     bool dock_arrived_{false};
@@ -2089,35 +2100,35 @@ private:
     rclcpp::Time upper_cmd_start_time_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_idle_heartbeat_time_{0, 0, RCL_ROS_TIME};
 
-    // stair sequence (10Hz publish, no ACK/DONE)
+    // stair sequence (10Hz publish, wait down_juece)
     rclcpp::TimerBase::SharedPtr stair_timer_;
     int stair_phase_{0};
-    rclcpp::Time stair_phase_start_;
     uint8_t stair_target_cmd_{0};
+    bool stair_waiting_done_{false};
+    StairContext stair_context_{StairContext::NORMAL};
 
-    // grab sequence (10Hz, 3-phase: 0→N→0)
+    // grab sequence (legacy timed flow; currently unused)
     rclcpp::TimerBase::SharedPtr grab_timer_;
     int grab_phase_{0};
     rclcpp::Time grab_phase_start_;
     uint8_t grab_is_finsh_{0};
 
     // entry grab (block0 at col0 only; block2 moved to zone2_fixed_0)
-    int entry_grab_step_{0};   // 0=nav approach, 1=extend+wait1s→forward, 2=wait15s, 3=reverse, 4=retract, 5=done
+    int entry_grab_step_{0}; // 0=nav approach, 1=forward+grab, 2=wait done, 3=retreat
     rclcpp::TimerBase::SharedPtr entry_grab_timer_;
-    int entry_grab_phase_{0};  // 0=extend wait 1s, 1=wait 15s, 2=retract, 3=extend during nav
-    rclcpp::Time entry_grab_phase_start_;
+    uint8_t entry_grab_is_finsh_{0};
     uint8_t entry_block0_is_finsh_{2};
     double entry_approach_x_{1.6};
     double entry_block0_x_{2.0}, entry_block0_y_{0.289};
     double entry_block2_x_{3.0}, entry_block2_y_{1.41};
-    int zone2_grab_step_{0};   // 0=extend+wait1s, 1=nav forward, 2=wait15s, 3=reverse, 4=retract, 5=nav to block center
+    int zone2_grab_step_{0}; // 0=backoff, 1=start grab, 2=wait done
     rclcpp::TimerBase::SharedPtr zone2_grab_timer_;
-    int zone2_grab_phase_{0};  // 0=extend wait 1s, 1=wait 15s, 2=retract, 3=extend during nav
-    rclcpp::Time zone2_grab_phase_start_;
-    bool zone2_post_rotate_stairs_done_{false};  // 旋转后再上台阶标记, 防止死循环
-    int zone2_point0_substep_{0};  // 点0自定义: 0=上台阶1, 1=右转, 2=上台阶2, 3=左转, 4=上台阶3, 5=完成
-    // TODO(stair): 后续替换 arm seq wait, 订阅自定义话题
-    // rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr zone2_stair_arm_sub_;
+    uint8_t zone2_grab_is_finsh_{0};
+    double zone2_fixed_backoff_{0.1};
+    bool zone2_post_rotate_stairs_done_{false}; // 旋转后再上台阶标记, 防止死循环
+    int zone2_point0_substep_{0};               // 点0自定义: 0=上台阶1, 1=右转, 2=上台阶2, 3=左转, 4=上台阶3, 5=完成
+    bool zone2_point0_sequence_active_{false};
+    GrabContext grab_context_{GrabContext::NONE};
     uint8_t entry_block2_is_finsh_{1};
 };
 
