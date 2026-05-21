@@ -890,6 +890,37 @@ private:
                     handlePoint0Substep(task);
                     return;
                 }
+                if (task.id == 0)
+                {
+                    if (zone2_grab_step_ == 0)
+                    {
+                        RCLCPP_INFO(get_logger(), "Point0 grab: forward to block (%.2f,%.2f)", task.x, task.y);
+                        zone2_grab_step_ = 1;
+                        sendNavigateWithQuat(
+                            task.x, task.y, 0.0, task.qx, task.qy, task.qz, task.qw,
+                            [this](bool)
+                            { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
+                        return;
+                    }
+                    if (zone2_grab_step_ == 1)
+                    {
+                        if (grab_context_ != GrabContext::ZONE2_FIXED)
+                        {
+                            RCLCPP_INFO(get_logger(), "Point0 grab: START is_finsh=%d", task.grab_is_finsh);
+                            startZone2GrabPublish(task.grab_is_finsh);
+                            zone2_grab_step_ = 2;
+                        }
+                        return;
+                    }
+                    if (zone2_grab_step_ == 3)
+                    {
+                        zone2_point0_sequence_active_ = true;
+                        zone2_grab_step_ = 0;
+                        handlePoint0Substep(task);
+                        return;
+                    }
+                    return;
+                }
                 if (grab_context_ != GrabContext::ZONE2_FIXED)
                 {
                     if (zone2_grab_step_ == 0)
@@ -1841,9 +1872,13 @@ private:
             const auto &task = zone2_tasks_[current_zone2_index_];
             if (task.id == 0)
             {
-                zone2_point0_sequence_active_ = true;
-                zone2_point0_substep_ = 0;
-                handlePoint0Substep(task);
+                zone2_grab_step_ = 3;
+                RCLCPP_INFO(get_logger(), "Point0 grab done, retreat to approach (%.2f,%.2f)",
+                            task.approach_x, task.approach_y);
+                sendNavigateWithQuat(
+                    task.approach_x, task.approach_y, 0.0, task.qx, task.qy, task.qz, task.qw,
+                    [this](bool)
+                    { if (state_ == State::ZONE2_GRAB) transitionTo(State::ZONE2_GRAB); });
                 return;
             }
 
