@@ -894,6 +894,11 @@ private:
                 {
                     if (zone2_grab_step_ == 0)
                     {
+                        if (grab_context_ != GrabContext::ZONE2_FIXED)
+                        {
+                            RCLCPP_INFO(get_logger(), "Point0 grab: START is_finsh=%d", task.grab_is_finsh);
+                            startZone2GrabPublish(task.grab_is_finsh);
+                        }
                         RCLCPP_INFO(get_logger(), "Point0 grab: forward to block (%.2f,%.2f)", task.x, task.y);
                         zone2_grab_step_ = 1;
                         sendNavigateWithQuat(
@@ -904,12 +909,6 @@ private:
                     }
                     if (zone2_grab_step_ == 1)
                     {
-                        if (grab_context_ != GrabContext::ZONE2_FIXED)
-                        {
-                            RCLCPP_INFO(get_logger(), "Point0 grab: START is_finsh=%d", task.grab_is_finsh);
-                            startZone2GrabPublish(task.grab_is_finsh);
-                            zone2_grab_step_ = 2;
-                        }
                         return;
                     }
                     if (zone2_grab_step_ == 3)
