@@ -7,7 +7,6 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(r2_interfaces REQUIRED)
 find_package(robot_serial REQUIRED)
 
 add_executable(fake_upper_body_node
@@ -16,7 +15,6 @@ add_executable(fake_upper_body_node
 
 ament_target_dependencies(fake_upper_body_node
   rclcpp
-  r2_interfaces
   robot_serial
 )
 

@@ -10,11 +10,19 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(r2_interfaces REQUIRED)
 find_package(robot_serial REQUIRED)
 
 add_executable(r2_decision_node
+  src/r2_decision_main.cpp
   src/r2_decision_node.cpp
+  src/r2_decision_fsm.cpp
+  src/r2_decision_callbacks.cpp
+  src/r2_decision_actions.cpp
+  src/r2_decision_zone2_planner.cpp
+)
+
+target_include_directories(r2_decision_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 ament_target_dependencies(r2_decision_node
@@ -22,7 +30,6 @@ ament_target_dependencies(r2_decision_node
   rclcpp_action
   nav2_msgs
   std_msgs
-  r2_interfaces
   robot_serial
 )
 
