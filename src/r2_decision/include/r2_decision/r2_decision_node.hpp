@@ -456,6 +456,10 @@ class R2DecisionNode : public rclcpp::Node
 public:
     R2DecisionNode();
 
+    // 决策树 (public, fsm.cpp 和 zone2_planner.cpp 都会调用)
+    static void buildZone2FixedRoute(Context &ctx);
+    static void buildZone2Route(Context &ctx, const std::vector<uint8_t> &lightboard_map);
+
 private:
     void tick();
     void postEvent(EventType type, bool success = false, uint8_t command = 0);
@@ -470,10 +474,6 @@ private:
     void onLightboardMap(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
-
-    // helpers
-    static void buildZone2FixedRoute(Context &ctx);
-    static void buildZone2Route(Context &ctx, const std::vector<uint8_t> &lightboard_map);
 
     // ROS2
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_ack_sub_;

@@ -747,7 +747,7 @@ void Zone2State::enterSub(Context &ctx, ActionDispatcher &act)
         {
             // ── 固定路线抓取 ──
             // Point0 的多步序列 (上台阶/旋转), 已激活则继续
-            if (t.id == 0 && ctx.zone2_point0_sequence_active_)
+            if (t.id == 0 && ctx.zone2_point0_sequence_active)
             {
                 handlePoint0Substep(ctx, act);
                 return;
@@ -924,7 +924,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
 
     case Sub::GRAB:
         // ── Point0 多步序列中的导航完成 (substep 1→2, 2→3, 4→5) ──
-        if (e.type == EventType::NAV_DONE && ctx.use_fixed_zone2_route && ctx.zone2_point0_sequence_active_)
+        if (e.type == EventType::NAV_DONE && ctx.use_fixed_zone2_route && ctx.zone2_point0_sequence_active)
         {
             if (!e.success)
                 RCLCPP_WARN(rclcpp::get_logger("fsm"), "Point0: nav failed");
@@ -1039,7 +1039,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             {
                 const auto &t = ctx.zone2_tasks[ctx.zone2_index];
                 // Point0 序列中的台阶: 推进 substep, 回到 GRAB 继续下一步
-                if (ctx.zone2_point0_sequence_active_)
+                if (ctx.zone2_point0_sequence_active)
                 {
                     ++ctx.zone2_point0_substep;
                     sub_ = Sub::GRAB;
@@ -1080,7 +1080,6 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
     case 0:
     {
         // 导航到 approach 位置
-        double bx = ctx.entry_block0_x;
         double by = ctx.entry_block0_y;
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab step0: nav approach (%.2f,%.2f)",
                     ctx.entry_approach_x, by);
@@ -1122,7 +1121,7 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
  */
 void Zone2State::tickGrab(Context &ctx, ActionDispatcher &act)
 {
-    if (ctx.zone2_point0_sequence_active_)
+    if (ctx.zone2_point0_sequence_active)
     {
         handlePoint0Substep(ctx, act);  // Point0 序列激活, 继续推进 substep
         return;
@@ -1133,7 +1132,7 @@ void Zone2State::tickGrab(Context &ctx, ActionDispatcher &act)
     // Point0 抓取完成后退到了 approach → 启动多步序列
     if (t.id == 0 && ctx.zone2_grab_step == 3)
     {
-        ctx.zone2_point0_sequence_active_ = true;
+        ctx.zone2_point0_sequence_active = true;
         ctx.zone2_grab_step = 0;
         ctx.zone2_point0_substep = 0;
         handlePoint0Substep(ctx, act);
@@ -1191,7 +1190,7 @@ void Zone2State::handlePoint0Substep(Context &ctx, ActionDispatcher &act)
         break;
     case 6:
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Point0 all substeps done, advance to next point");
-        ctx.zone2_point0_sequence_active_ = false;
+        ctx.zone2_point0_sequence_active = false;
         ctx.zone2_point0_substep = 0;
         ctx.point0_nav_sent = false;
         ++ctx.zone2_index;
