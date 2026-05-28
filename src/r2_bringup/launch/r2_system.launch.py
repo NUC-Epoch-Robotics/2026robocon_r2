@@ -53,7 +53,7 @@ def generate_launch_description():
                 'spearhead_base_y': -0.959,
                 'spearhead_base_z': -0.622,
                 'spearhead_spacing': 0.2,
-                'zone1_route': [2, 1, 4, 5, 3, 6],
+                'zone1_route': [6],
                 # 其他 Zone1 导航点 (非矛头)
                 'zone1_point_2_x': 1.7,
                 'zone1_point_2_y': 1.42,
@@ -161,12 +161,6 @@ def generate_launch_description():
         ),
 
         # ── Fake hardware (simulation / testing) ─────────────
-        Node(
-            package='r2_fake_lower_body',
-            executable='fake_lower_body_node',
-            name='fake_lower_body_node',
-            output='screen',
-        ),
         Node(
             package='r2_fake_upper_body',
             executable='fake_upper_body_node',

@@ -10,7 +10,6 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
-  <depend>r2_interfaces</depend>
   <depend>robot_serial</depend>
 
   <export>
