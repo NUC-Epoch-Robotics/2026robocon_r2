@@ -332,10 +332,10 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     {
         // 抓矛头后: 横移 50cm (y+0.5), 然后逆时针转 90°
         ctx.spearhead_post_dock_step = 0;
-        double dock_x = ctx.dock_r1_x;
-        double dock_y = ctx.dock_r1_y + 0.5;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: move to (%.2f, %.2f)", dock_x, dock_y);
-        act.sendNavigateWithQuat(dock_x, dock_y, ctx.dock_r1_z, 0, 0, 0, 1, ctx);
+        double target_x = ctx.current_x;
+        double target_y = ctx.current_y + 0.5;
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: move y+0.5 to (%.2f, %.2f)", target_x, target_y);
+        act.sendNavigateWithQuat(target_x, target_y, 0, 0, 0, 0, 1, ctx);
         break;
     }
     case Sub::UP_STAIRS:
@@ -513,11 +513,9 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
             if (!e.success)
                 RCLCPP_WARN(rclcpp::get_logger("fsm"), "Spearhead post-dock: nav failed");
             ctx.spearhead_post_dock_step = 1;
-            double dock_x = ctx.dock_r1_x;
-            double dock_y = ctx.dock_r1_y + 0.5;
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: rotate 90 CCW at (%.2f, %.2f)", dock_x, dock_y);
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: rotate 90 CCW at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
             // 逆时针 90°: qz=sin(45°)=0.707, qw=cos(45°)=0.707
-            act.sendNavigateWithQuat(dock_x, dock_y, ctx.dock_r1_z, 0, 0, 0.707, 0.707, ctx);
+            act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, 0.707, 0.707, ctx);
         }
         // step1: 旋转完成后 → 停在这里, 不执行下一步
         else if (e.type == EventType::NAV_DONE && ctx.spearhead_post_dock_step == 1)

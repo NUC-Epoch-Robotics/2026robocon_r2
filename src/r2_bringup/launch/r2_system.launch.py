@@ -50,8 +50,8 @@ def generate_launch_description():
                 'sim_mode': sim_mode,
                 'nav_frame_id': 'odom',
                 # 矛头基准点 (2号矛头), 间距200mm
-                'spearhead_base_x': -0.377,
-                'spearhead_base_y': -0.929,
+                'spearhead_base_x': -0.307,
+                'spearhead_base_y': -1.079,
                 'spearhead_base_z': -0.622,
                 'spearhead_spacing': 0.2,
                 'zone1_route': [5],
