@@ -166,6 +166,8 @@ struct Context
 
     // ---- navigation ----
     bool nav_chain_in_progress{false};
+    double current_x{0.0};  // 上次导航目标x
+    double current_y{0.0};  // 上次导航目标y
 
     // ---- zone1 progress ----
     size_t zone1_index{0};
@@ -385,9 +387,10 @@ private:
     enum class Sub : uint8_t
     {
         NAV_POINT,
+        NAV_POINT_Y,        // 矛头点第二段: 变y
         OPERATE,
         DOCK,
-        SPEARHEAD_POST_DOCK,  // 抓矛头对接后: 发2→等5s→发0
+        SPEARHEAD_POST_DOCK,  // 抓矛头对接后: 横移→旋转
         UP_STAIRS,
         DOWN_STAIRS,
         FINISH,

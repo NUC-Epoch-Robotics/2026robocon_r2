@@ -50,6 +50,10 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     // ── params → Context ──────────────────────────────────────
     ctx_.nav_frame_id = declare_parameter<std::string>("nav_frame_id", "odom");
 
+    // 起点位置 (开局坐标)
+    ctx_.current_x = declare_parameter<double>("start_x", -0.352);
+    ctx_.current_y = declare_parameter<double>("start_y", -0.259);
+
     ctx_.zone1_arm_command = static_cast<uint8_t>(declare_parameter<int>("zone1_arm_command", 0));
 
     double spearhead_base_x = declare_parameter<double>("spearhead_base_x", 0.0);

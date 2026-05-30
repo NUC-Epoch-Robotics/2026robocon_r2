@@ -36,6 +36,8 @@ void ActionDispatcher::sendNavigateWithQuat(double x, double y, double z,
                                             Context &ctx)
 {
     ctx.nav_chain_in_progress = true;
+    ctx.current_x = x;
+    ctx.current_y = y;
 
     if (!waitActionServer<NavigateToPose>(nav_to_pose_client_, "navigate_to_pose"))
     {

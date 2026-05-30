@@ -149,6 +149,7 @@ const char *Zone1State::name() const
     switch (sub_)
     {
     case Sub::NAV_POINT:           return "Zone1/NavPoint";
+    case Sub::NAV_POINT_Y:         return "Zone1/NavPointY";
     case Sub::OPERATE:             return "Zone1/Operate";
     case Sub::DOCK:                return "Zone1/Dock";
     case Sub::SPEARHEAD_POST_DOCK: return "Zone1/SpearheadPostDock";
@@ -159,7 +160,7 @@ const char *Zone1State::name() const
     return "Zone1";
 }
 
-// 进入 Zone1: 从第一个矛头点开始
+// 进入 Zone1
 std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &act)
 {
     sub_ = Sub::NAV_POINT;
@@ -246,8 +247,6 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         // 所有矛头点都走完了?
         if (ctx.zone1_index >= ctx.zone1_route_ids.size())
         {
-            // 固定路线 → FINISH (在 onTick 中构建 Zone2 任务)
-            // 动态路线 → UP_STAIRS → DOWN_STAIRS
             sub_ = ctx.use_fixed_zone2_route ? Sub::FINISH : Sub::UP_STAIRS;
             enterSub(ctx, act);
             return;
@@ -262,8 +261,21 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
             enterSub(ctx, act);
             return;
         }
+        {
+            const auto &t = it->second;
+            // 第一段: 只变x, y保持当前位置
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d x=%.2f (y stays %.2f)", t.id, t.x, ctx.current_y);
+            act.sendNavigateWithQuat(t.x, ctx.current_y, t.z, 0, 0, 0, 1, ctx);
+        }
+        break;
+    }
+    case Sub::NAV_POINT_Y:
+    {
+        // 第二段: 变y到矛头点, x已经在上一步到位了
+        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
+        auto it = ctx.point_table.find(pid);
         const auto &t = it->second;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav to point %d (%.2f, %.2f)", t.id, t.x, t.y);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d y=%.2f (x=%.2f)", t.id, t.y, t.x);
         act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, 0, 1, ctx);
         break;
     }
@@ -357,13 +369,32 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
     switch (sub_)
     {
     case Sub::NAV_POINT:
-        // 导航完成 → 进入操作子状态 (打矛头)
+        // 第一段x完成 → 走第二段y
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
             {
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: nav to point failed, skip");
-                ++ctx.zone1_index;       // 导航失败, 跳过这个点
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: nav x failed, skip");
+                ++ctx.zone1_index;
+                sub_ = Sub::NAV_POINT;
+            }
+            else
+            {
+                sub_ = Sub::NAV_POINT_Y;
+            }
+            enterSub(ctx, act);
+        }
+        break;
+
+    case Sub::NAV_POINT_Y:
+        // 第二段y完成 → OPERATE
+        if (e.type == EventType::NAV_DONE)
+        {
+            if (!e.success)
+            {
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: nav y failed, skip");
+                ++ctx.zone1_index;
+                sub_ = Sub::NAV_POINT;
             }
             else
             {
