@@ -65,8 +65,8 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
                                ctx_.zone1_arm_command,
                                false};
     }
-    // 点6 走抓矛头流程
-    ctx_.point_table[6].use_spearhead = true;
+    // 点5 走抓矛头流程 (起点为2号矛头时, 抓矛头点为5)
+    ctx_.point_table[5].use_spearhead = true;
 
     ctx_.zone1_route_ids = declare_parameter<std::vector<int64_t>>(
         "zone1_route", std::vector<int64_t>{6});

@@ -462,12 +462,25 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
             }
             enterSub(ctx, act);
         }
-        // 对接超时: 跳过这个点, 继续下一个
+        // 对接超时
         else if (e.type == EventType::DOCK_TIMEOUT)
         {
-            RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock timeout, skip");
-            ++ctx.zone1_index;
-            sub_ = Sub::NAV_POINT;
+            // 抓矛头点: 没检测到消失也走 SPEARHEAD_POST_DOCK (等5s→发0)
+            const int pid = ctx.zone1_route_ids[ctx.zone1_index];
+            auto it = ctx.point_table.find(pid);
+            bool is_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
+
+            if (is_spearhead)
+            {
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock timeout on spearhead point, still do post-dock");
+                sub_ = Sub::SPEARHEAD_POST_DOCK;
+            }
+            else
+            {
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock timeout, skip");
+                ++ctx.zone1_index;
+                sub_ = Sub::NAV_POINT;
+            }
             enterSub(ctx, act);
         }
         break;
@@ -1223,6 +1236,7 @@ std::unique_ptr<TopState> ExitState::onEnter(Context &ctx, ActionDispatcher &act
 
 std::unique_ptr<TopState> ExitState::handleEvent(Context &ctx, ActionDispatcher &act, const Event &e)
 {
+    (void)ctx;
     (void)act;
     if (e.type == EventType::NAV_DONE)
     {
