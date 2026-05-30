@@ -176,18 +176,6 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
     if (sub_ == Sub::DOCK)
         checkDockTransition(ctx, act);   // 等导航到对接站后, 监控 spearhead
 
-    // 抓矛头对接后: step1 等 5s → 发 zhuangtai=0
-    if (sub_ == Sub::SPEARHEAD_POST_DOCK && ctx.spearhead_post_dock_step == 1)
-    {
-        auto elapsed = (rclcpp::Clock().now() - ctx.spearhead_post_dock_start).seconds();
-        if (elapsed > 5.0)
-        {
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: 5s elapsed, send zhuangtai=0");
-            ctx.spearhead_post_dock_step = 2;
-            act.sendSpearheadCommand(0);
-        }
-    }
-
     checkTimeLimit(ctx, act);            // 全局 120s 超时
 
     if (sub_ == Sub::FINISH)
@@ -330,10 +318,12 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::SPEARHEAD_POST_DOCK:
     {
-        // 对接完成后: 发 zhuangtai=2, 等 ARM_DONE 后进入 5s 倒计时
+        // 抓矛头后: 横移 50cm (y+0.5), 然后逆时针转 90°
         ctx.spearhead_post_dock_step = 0;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: send zhuangtai=2");
-        act.sendSpearheadCommand(2);
+        double dock_x = ctx.dock_r1_x;
+        double dock_y = ctx.dock_r1_y + 0.5;
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: move to (%.2f, %.2f)", dock_x, dock_y);
+        act.sendNavigateWithQuat(dock_x, dock_y, ctx.dock_r1_z, 0, 0, 0, 1, ctx);
         break;
     }
     case Sub::UP_STAIRS:
@@ -486,24 +476,26 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::SPEARHEAD_POST_DOCK:
-        // 对接后抓矛头步骤: step0→发2后等ARM_DONE, step1→等5s(onTick), step2→发0后等ARM_DONE
-        if (e.type == EventType::ARM_DONE)
+        // step0: 横移完成后 → 逆时针转 90°
+        if (e.type == EventType::NAV_DONE && ctx.spearhead_post_dock_step == 0)
         {
-            if (ctx.spearhead_post_dock_step == 0)
-            {
-                // zhuangtai=2 完成 → 开始等 5s
-                ctx.spearhead_post_dock_step = 1;
-                ctx.spearhead_post_dock_start = rclcpp::Clock().now();
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: zhuangtai=2 done, waiting 5s...");
-            }
-            else if (ctx.spearhead_post_dock_step == 2)
-            {
-                // zhuangtai=0 完成 → 直接进 Zone2 入口抓取
-                ctx.spearhead_post_dock_step = 0;
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: zhuangtai=0 done, go Zone2");
-                sub_ = Sub::FINISH;
-                enterSub(ctx, act);
-            }
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Spearhead post-dock: nav failed");
+            ctx.spearhead_post_dock_step = 1;
+            double dock_x = ctx.dock_r1_x;
+            double dock_y = ctx.dock_r1_y + 0.5;
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: rotate 90 CCW at (%.2f, %.2f)", dock_x, dock_y);
+            // 逆时针 90°: qz=sin(45°)=0.707, qw=cos(45°)=0.707
+            act.sendNavigateWithQuat(dock_x, dock_y, ctx.dock_r1_z, 0, 0, 0.707, 0.707, ctx);
+        }
+        // step1: 旋转完成后 → 停在这里, 不执行下一步
+        else if (e.type == EventType::NAV_DONE && ctx.spearhead_post_dock_step == 1)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Spearhead post-dock: rotate failed");
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: done, holding position");
+            ctx.spearhead_post_dock_step = 0;
+            // 停在这里, 不进入下一步
         }
         break;
 
