@@ -174,6 +174,7 @@ struct Context
     int zone1_arm_retry{0};
     int dock_success_count{0};
     bool dock_arrived{false};
+    int dock_step{0};  // 0=move, 1=rotate, 2=wait
     bool spearhead_was_present{false};
     rclcpp::Time dock_start_time{0, 0, RCL_ROS_TIME};
     rclcpp::Time zone1_start_time{0, 0, RCL_ROS_TIME};
