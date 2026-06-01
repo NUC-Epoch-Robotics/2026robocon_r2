@@ -42,6 +42,20 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
         "r2/control/button_state", 10,
         std::bind(&R2DecisionNode::onButtonState, this, _1));
 
+    // ── cylinder alignment subscriptions ─────────────────────
+    cyl_valid_sub_ = create_subscription<std_msgs::msg::Bool>(
+        "spearhead/cyl_valid", 10,
+        std::bind(&R2DecisionNode::onCylValid, this, _1));
+    cyl_offset_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "spearhead/offset", 10,
+        std::bind(&R2DecisionNode::onCylOffset, this, _1));
+    cyl_overlap_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "spearhead/overlap", 10,
+        std::bind(&R2DecisionNode::onCylOverlap, this, _1));
+    cyl_width_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "spearhead/cyl_width", 10,
+        std::bind(&R2DecisionNode::onCylWidth, this, _1));
+
     // ── main loop ─────────────────────────────────────────────
     timer_ = create_wall_timer(
         std::chrono::milliseconds(20),
@@ -119,6 +133,17 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     ctx_.zone1_max_time_s = declare_parameter<double>("zone1_max_time_s", 120.0);
     ctx_.scene_confirm_timeout_s = declare_parameter<double>("scene_confirm_timeout_s", 5.0);
     ctx_.dock_timeout_s = declare_parameter<double>("dock_timeout_s", 15.0);
+
+    // Visual align params (bang-bang)
+    ctx_.vision_align_offset_threshold = declare_parameter<double>("vision_align_offset_threshold", 0.05);
+    ctx_.vision_align_overlap_threshold = declare_parameter<double>("vision_align_overlap_threshold", 0.95);
+    ctx_.vision_align_stable_required = declare_parameter<int>("vision_align_stable_required", 5);
+    ctx_.vision_align_timeout_s = declare_parameter<double>("vision_align_timeout_s", 10.0);
+    ctx_.vision_align_speed_x = declare_parameter<double>("vision_align_speed_x", 0.08);
+    ctx_.vision_align_speed_y_fwd = declare_parameter<double>("vision_align_speed_y_fwd", 0.08);
+    ctx_.vision_align_speed_y_back = declare_parameter<double>("vision_align_speed_y_back", 0.08);
+    ctx_.vision_align_expected_width = declare_parameter<double>("vision_align_expected_width", 120.0);
+    ctx_.vision_align_width_tolerance = declare_parameter<double>("vision_align_width_tolerance", 10.0);
 
     // MF exit
     ctx_.mf_exit_x = declare_parameter<double>("mf_exit_x", 3.2);

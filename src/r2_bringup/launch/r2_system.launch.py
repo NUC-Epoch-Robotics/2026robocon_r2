@@ -50,7 +50,7 @@ def generate_launch_description():
                 'sim_mode': sim_mode,
                 'nav_frame_id': 'odom',
                 # 矛头基准点 (2号矛头), 间距200mm
-                'spearhead_base_x': -0.337,
+                'spearhead_base_x': -0.366,
                 'spearhead_base_y': -1.079,
                 'spearhead_base_z': -0.622,
                 'spearhead_spacing': 0.2,
@@ -197,9 +197,20 @@ def generate_launch_description():
             parameters=[{
                 'camera_index': spearhead_camera_index,
                 'fps': 20.0,
-                'frame_width': 640,
-                'frame_height': 480,
+                'frame_width': 1920,
+                'frame_height': 1080,
                 'start_enabled': False,
+                # gray cylinder ROI (on 1920x1080 frame)
+                'cyl_roi_x': 485,
+                'cyl_roi_y': 0,
+                'cyl_roi_w': 600,
+                'cyl_roi_h': 1080,
+                'cyl_band_width': 120,
+                'cyl_s_max': 60,
+                'cyl_v_min': 80,
+                'cyl_v_max': 220,
+                'cyl_min_area': 3000.0,
+                'cyl_expected_width': 120.0,
             }],
         ),
 

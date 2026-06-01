@@ -13,6 +13,7 @@ ActionDispatcher::ActionDispatcher(rclcpp::Node &node) : node_(node)
     lightboard_enable_pub_ = node_.create_publisher<std_msgs::msg::Bool>("lightboard/enable", 10);
     grab_scene_enable_pub_ = node_.create_publisher<std_msgs::msg::Bool>("grab_scene/enable", 10);
     grab_scene_expected_pub_ = node_.create_publisher<std_msgs::msg::UInt8>("grab_scene/expected_scene", 10);
+    cmd_vel_pub_ = node_.create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
     nav_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(&node_, "navigate_to_pose");
 }
 
@@ -373,6 +374,28 @@ void ActionDispatcher::publishCmd(uint8_t status_bit, uint8_t is_finsh, uint8_t 
     msg.is_finsh = is_finsh;
     msg.status_bit = status_bit;
     upper_cmd_pub_->publish(msg);
+}
+
+// ==========================================================================
+// cmd_vel (visual align)
+// ==========================================================================
+
+void ActionDispatcher::publishCmdVel(double linear_x, double linear_y)
+{
+    geometry_msgs::msg::Twist msg;
+    msg.linear.x = linear_x;
+    msg.linear.y = linear_y;
+    msg.linear.z = 0.0;
+    msg.angular.x = 0.0;
+    msg.angular.y = 0.0;
+    msg.angular.z = 0.0;
+    cmd_vel_pub_->publish(msg);
+}
+
+void ActionDispatcher::stopCmdVel()
+{
+    geometry_msgs::msg::Twist msg;  // all zeros
+    cmd_vel_pub_->publish(msg);
 }
 
 // ==========================================================================

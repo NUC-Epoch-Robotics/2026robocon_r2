@@ -15,8 +15,10 @@
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "robot_serial/msg/juece.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/u_int8.hpp"
 #include "std_msgs/msg/u_int8_multi_array.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
 
@@ -39,6 +41,7 @@ enum class EventType : uint8_t
     DOCK_TIMEOUT,
     ZONE1_TIMEOUT,
     SCENE_CONFIRM_TIMEOUT,
+    VISION_ALIGN_DONE,
 };
 
 struct Event
@@ -156,6 +159,25 @@ struct Context
     // ---- sensor mirror ----
     bool spearhead_exists{false};
     bool lightboard_map_received{false};
+
+    // ---- cylinder alignment (visual align) ----
+    float cyl_norm_offset{0.0f};   // [-1,1] normalized x offset in ROI
+    bool cyl_valid{false};          // cylinder detected
+    float cyl_overlap{0.0f};       // overlap ratio with center band
+    float cyl_width{0.0f};         // cylinder bbox width in pixels
+
+    // ---- visual align parameters (bang-bang) ----
+    double vision_align_offset_threshold{0.05};   // |norm_offset| < this → aligned
+    double vision_align_overlap_threshold{0.95};   // overlap >= this → aligned
+    int vision_align_stable_required{5};           // consecutive aligned frames
+    double vision_align_timeout_s{10.0};
+    // fixed speeds for bang-bang (m/s)
+    double vision_align_speed_x{0.08};             // lateral correction (image left/right → robot x)
+    double vision_align_speed_y_fwd{0.08};         // forward correction (too narrow → robot -y)
+    double vision_align_speed_y_back{0.08};        // backward correction (too wide → robot +y)
+    // expected cylinder width (pixels) at correct distance
+    double vision_align_expected_width{120.0};
+    double vision_align_width_tolerance{10.0};     // |detected - expected| < this → distance ok
     std::vector<uint8_t> lightboard_map;
     std::vector<uint8_t> latest_lightboard_map;
     bool grab_scene_ready{false};
@@ -180,6 +202,10 @@ struct Context
     rclcpp::Time zone1_start_time{0, 0, RCL_ROS_TIME};
     int spearhead_post_dock_step{0};
     rclcpp::Time spearhead_post_dock_start{0, 0, RCL_ROS_TIME};
+
+    // ---- visual align state ----
+    int vision_stable_count{0};
+    rclcpp::Time vision_align_start_time{0, 0, RCL_ROS_TIME};
 
     // ---- zone2 progress ----
     size_t zone2_index{0};
@@ -256,6 +282,10 @@ public:
     // --- low-level publish ---
     void publishCmd(uint8_t status_bit, uint8_t is_finsh = 0, uint8_t zhuangtai = 0);
 
+    // --- cmd_vel (visual align) ---
+    void publishCmdVel(double linear_x, double linear_y);
+    void stopCmdVel();
+
     // --- called each tick ---
     void tick(Context &ctx);
 
@@ -281,6 +311,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lightboard_enable_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr grab_scene_enable_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr grab_scene_expected_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_to_pose_client_;
 
     // timers
@@ -389,6 +420,7 @@ private:
     {
         NAV_POINT,
         NAV_POINT_Y,        // 矛头点第二段: 变y
+        VISION_ALIGN,       // 视觉对齐灰柱 (bang-bang cmd_vel)
         OPERATE,
         DOCK,
         SPEARHEAD_POST_DOCK,  // 抓矛头对接后: 横移→旋转
@@ -400,6 +432,7 @@ private:
 
     void enterSub(Context &ctx, ActionDispatcher &act);
     std::unique_ptr<TopState> handleSubEvent(Context &ctx, ActionDispatcher &act, const Event &e);
+    void tickVisionAlign(Context &ctx, ActionDispatcher &act);
     void checkDockTransition(Context &ctx, ActionDispatcher &act);
     void checkTimeLimit(Context &ctx, ActionDispatcher &act);
 };
@@ -478,6 +511,10 @@ private:
     void onLightboardMap(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
+    void onCylValid(const std_msgs::msg::Bool::SharedPtr msg);
+    void onCylOffset(const std_msgs::msg::Float32::SharedPtr msg);
+    void onCylOverlap(const std_msgs::msg::Float32::SharedPtr msg);
+    void onCylWidth(const std_msgs::msg::Float32::SharedPtr msg);
 
     // ROS2
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_ack_sub_;
@@ -488,6 +525,10 @@ private:
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr button_state_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr cyl_valid_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr cyl_offset_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr cyl_overlap_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr cyl_width_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
 
     // core
