@@ -767,6 +767,8 @@ const char *Zone2State::name() const
         return "Zone2/NavPoint";
     case Sub::ROTATE:
         return "Zone2/Rotate";
+    case Sub::ROTATE_GRAB:
+        return "Zone2/RotateGrab";
     case Sub::WAIT_SCENE:
         return "Zone2/WaitScene";
     case Sub::GRAB:
@@ -890,6 +892,34 @@ void Zone2State::enterSub(Context &ctx, ActionDispatcher &act)
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2: ROTATE @ (%.2f,%.2f) q=(%.3f,%.3f,%.3f,%.3f)",
                     t.x, t.y, t.rqx, t.rqy, t.rqz, t.rqw);
         act.sendNavigateWithQuat(t.x, t.y, t.z, t.rqx, t.rqy, t.rqz, t.rqw, ctx);
+        break;
+    }
+
+    case Sub::ROTATE_GRAB:
+    {
+        // 动态路线: 转向拿相邻格KFS
+        const auto &t = ctx.zone2_tasks[ctx.zone2_index];
+        int adj = t.grab_adjacent_block;
+        if (adj >= 0 && adj < 12)
+        {
+            // 计算朝向相邻格的四元数
+            double dx = ctx.zone2_blocks[adj].x - t.x;
+            double dy = ctx.zone2_blocks[adj].y - t.y;
+            double yaw = std::atan2(dy, dx);
+            double qz = std::sin(yaw / 2.0);
+            double qw = std::cos(yaw / 2.0);
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2: ROTATE_GRAB block %d → adj %d yaw=%.2f",
+                        t.id, adj, yaw);
+            act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, qz, qw, ctx);
+        }
+        else
+        {
+            // 无效的相邻块，跳过
+            RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2: ROTATE_GRAB invalid adj=%d, skip", adj);
+            ++ctx.zone2_index;
+            sub_ = Sub::NAV_POINT;
+            enterSub(ctx, act);
+        }
         break;
     }
 
@@ -1040,8 +1070,12 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             }
             else
             {
-                // 动态路线: 导航到了 → 等场景确认
-                sub_ = Sub::WAIT_SCENE;
+                // 动态路线: 导航到了 → 检查是否需要转向拿相邻KFS
+                const auto &t = ctx.zone2_tasks[ctx.zone2_index];
+                if (t.grab_adjacent_block >= 0)
+                    sub_ = Sub::ROTATE_GRAB;
+                else
+                    sub_ = Sub::WAIT_SCENE;
             }
             enterSub(ctx, act);
         }
@@ -1064,6 +1098,21 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
                 ++ctx.zone2_index;
                 sub_ = Sub::NAV_POINT;
             }
+            enterSub(ctx, act);
+        }
+        break;
+
+    case Sub::ROTATE_GRAB:
+        // 转向完成 → 发机械臂指令抓取 → 下一个点
+        if (e.type == EventType::NAV_DONE)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2: rotate_grab nav failed");
+            // TODO: 发机械臂指令抓取相邻格KFS
+            // 暂时直接跳到下一个点
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2: ROTATE_GRAB done, advance");
+            ++ctx.zone2_index;
+            sub_ = Sub::NAV_POINT;
             enterSub(ctx, act);
         }
         break;

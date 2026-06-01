@@ -99,6 +99,7 @@ struct Zone2Task
     int8_t stair_cmd{0};
     uint8_t grab_is_finsh{0};
     double rotate_x{0}, rotate_y{0};
+    int grab_adjacent_block{-1};  // >=0: 在当前格转向拿相邻格的KFS，不移动
 };
 
 struct Zone2BlockInfo
@@ -452,6 +453,7 @@ private:
         ENTRY_GRAB,
         NAV_POINT,
         ROTATE,
+        ROTATE_GRAB,    // 动态路线: 转向拿相邻格KFS
         WAIT_SCENE,
         GRAB,
         UP_STAIRS,

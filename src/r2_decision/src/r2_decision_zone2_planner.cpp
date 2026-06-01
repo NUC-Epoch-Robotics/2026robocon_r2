@@ -178,74 +178,162 @@ void R2DecisionNode::buildZone2Route(Context &ctx, const std::vector<uint8_t> &l
         return;
     }
 
-    std::vector<int> r2_targets;
-    bool passable[12] = {false};
+    // ── height map (fixed per block) ──
+    //  2  1  2     row 0
+    //  3  2  1     row 1
+    //  2  3  2     row 2
+    //  1  2  1     row 3
+    constexpr int kHeight[12] = {2, 1, 2, 3, 2, 1, 2, 3, 2, 1, 2, 1};
 
+    // ── parse lightboard ──
+    //  0=empty  1=R1 KFS(passable)  2=R2 KFS(target)  3=fake(obstacle)
+    bool passable[12];
+    bool has_r2[12];
     for (int i = 0; i < 12; ++i)
     {
-        if (lightboard_map[i] == 2)
-            r2_targets.push_back(i);
-        passable[i] = (lightboard_map[i] == 0 || lightboard_map[i] == 2);
+        has_r2[i] = (lightboard_map[i] == 2);
+        passable[i] = (lightboard_map[i] != 3);  // only fake is obstacle
     }
 
-    if (r2_targets.empty())
-    {
-        RCLCPP_WARN(rclcpp::get_logger("planner"),
-                    "buildZone2Route: no R2 blocks on lightboard");
-        return;
-    }
+    // ── count R2 KFS per column ──
+    int col_r2[3] = {0, 0, 0};
+    for (int i = 0; i < 12; ++i)
+        if (has_r2[i])
+            col_r2[i % 3]++;
 
-    int dist[12];
-    std::fill_n(dist, 12, -1);
+    // ── choose primary column (most R2 KFS) ──
+    int primary_col = 0;
+    if (col_r2[1] > col_r2[primary_col]) primary_col = 1;
+    if (col_r2[2] > col_r2[primary_col]) primary_col = 2;
+
+    // ── entry at block 1 ──
+    int pos = 1;
+    std::vector<int> path;
+    std::unordered_map<int, int> adjacent_grabs;  // block → adjacent block to grab
+    path.push_back(pos);
+    if (has_r2[pos]) has_r2[pos] = false;
+
+    // ── move to primary column in row 0 ──
+    int cur_col = pos % 3;
+    if (cur_col != primary_col)
     {
-        int queue[12], head = 0, tail = 0;
-        for (int e : {0, 1, 2})
+        int step = (primary_col > cur_col) ? 1 : -1;
+        for (int c = cur_col + step; ; c += step)
         {
-            if (passable[e])
-            {
-                dist[e] = 1;
-                queue[tail++] = e;
-            }
-        }
-        while (head < tail)
-        {
-            int cur = queue[head++];
-            for (int ni = 0; ni < 4; ++ni)
-            {
-                int nb = kAdj[cur][ni];
-                if (nb < 0 || dist[nb] >= 0 || !passable[nb])
-                    continue;
-                dist[nb] = dist[cur] + 1;
-                queue[tail++] = nb;
-            }
+            int block = c;  // row 0
+            if (!passable[block]) break;
+            path.push_back(block);
+            pos = block;
+            if (has_r2[pos]) has_r2[pos] = false;
+            if (c == primary_col) break;
         }
     }
 
-    std::sort(r2_targets.begin(), r2_targets.end(),
-              [&](int a, int b)
-              {
-                  bool ae = isEntryBlock(a), be = isEntryBlock(b);
-                  if (ae != be) return ae > be;
-                  if (dist[a] != dist[b]) return dist[a] < dist[b];
-                  return a < b;
-              });
-
-    int current_pos = -1;
-    std::vector<int> plan;
-
-    for (int target : r2_targets)
+    // ── descend row by row ──
+    int target_col = primary_col;
+    for (int row = 0; row < 3; ++row)
     {
-        if (dist[target] < 0) continue;
+        int next_row = row + 1;
+        int next_block = next_row * 3 + target_col;
 
-        int step = findFirstStep(current_pos, target, passable);
-        if (step >= 0 && step != target && !isAlreadyPlanned(plan, step))
-            plan.push_back(step);
-        plan.push_back(target);
-        passable[target] = true;
-        current_pos = target;
+        // check passable + height constraint: descent ≤ 1
+        bool can_descend = passable[next_block] && (kHeight[pos] - kHeight[next_block] <= 1);
+        if (!can_descend)
+        {
+            // can't descend here, try adjacent columns
+            bool found = false;
+            for (int dc : {-1, 1})
+            {
+                int alt_col = target_col + dc;
+                if (alt_col < 0 || alt_col > 2) continue;
+                int alt_block = next_row * 3 + alt_col;
+                if (!passable[alt_block]) continue;
+                if (kHeight[pos] - kHeight[alt_block] > 1) continue;
+
+                // move horizontally to alt_col
+                int cur = pos % 3;
+                if (cur != alt_col)
+                {
+                    int s = (alt_col > cur) ? 1 : -1;
+                    for (int c = cur + s; ; c += s)
+                    {
+                        int block = row * 3 + c;
+                        if (!passable[block]) break;
+                        path.push_back(block);
+                        pos = block;
+                        if (has_r2[pos]) has_r2[pos] = false;
+                        if (c == alt_col) break;
+                    }
+                }
+                // descend
+                path.push_back(alt_block);
+                pos = alt_block;
+                if (has_r2[pos]) has_r2[pos] = false;
+                target_col = alt_col;
+                found = true;
+                break;
+            }
+            if (!found) break;
+        }
+        else
+        {
+            // mark adjacent R2 KFS for rotation grab (no physical move)
+            cur_col = pos % 3;
+            for (int dc : {-1, 1})
+            {
+                int adj_col = cur_col + dc;
+                if (adj_col < 0 || adj_col > 2) continue;
+                int adj_block = row * 3 + adj_col;
+                if (has_r2[adj_block] && passable[adj_block])
+                {
+                    // record: grab adjacent block's KFS by rotating at current pos
+                    adjacent_grabs[pos] = adj_block;
+                    has_r2[adj_block] = false;
+                }
+            }
+
+            // descend
+            path.push_back(next_block);
+            pos = next_block;
+            if (has_r2[pos]) has_r2[pos] = false;
+        }
     }
 
-    for (int idx : plan)
+    // ── exit row: mark adjacent R2 KFS for rotation grab ──
+    cur_col = pos % 3;
+    for (int dc : {-1, 1})
+    {
+        int adj_col = cur_col + dc;
+        if (adj_col < 0 || adj_col > 2) continue;
+        int adj_block = 9 + adj_col;
+        if (has_r2[adj_block] && passable[adj_block])
+        {
+            adjacent_grabs[pos] = adj_block;
+            has_r2[adj_block] = false;
+        }
+    }
+
+    // ── exit at 11 or 9 ──
+    for (int exit_block : {11, 9})
+    {
+        if (pos == exit_block) break;
+        if (!passable[exit_block]) continue;
+        // check adjacency
+        bool adj = false;
+        for (int ni = 0; ni < 4; ++ni)
+            if (kAdj[pos][ni] == exit_block)
+                adj = true;
+        if (adj)
+        {
+            path.push_back(exit_block);
+            pos = exit_block;
+            if (has_r2[pos]) has_r2[pos] = false;
+            break;
+        }
+    }
+
+    // ── build tasks ──
+    for (int idx : path)
     {
         Zone2Task t;
         t.id = idx;
@@ -253,17 +341,24 @@ void R2DecisionNode::buildZone2Route(Context &ctx, const std::vector<uint8_t> &l
         t.y = ctx.zone2_blocks[idx].y;
         t.z = ctx.zone2_blocks[idx].z;
         t.grab_scene = ctx.zone2_blocks[idx].grab_scene;
-        t.arm_command = 0; // sceneToArmCmd placeholder
+        t.arm_command = 0;
+        auto it = adjacent_grabs.find(idx);
+        if (it != adjacent_grabs.end())
+            t.grab_adjacent_block = it->second;
         ctx.zone2_tasks.push_back(t);
     }
 
     RCLCPP_INFO(rclcpp::get_logger("planner"),
-                "buildZone2Route: %zu tasks:", ctx.zone2_tasks.size());
-    int task_idx = 0;
-    for (const auto &t : ctx.zone2_tasks)
+                "buildZone2Route: %zu tasks (primary_col=%d):", ctx.zone2_tasks.size(), primary_col);
+    for (size_t i = 0; i < ctx.zone2_tasks.size(); ++i)
     {
-        const char *pos = isEntryBlock(t.id) ? "[ENTRY]" : isExitBlock(t.id) ? "[EXIT]" : "";
-        RCLCPP_INFO(rclcpp::get_logger("planner"), "  #%d block %d %s (%.2f,%.2f) scene=%d cmd=%d",
-                    task_idx++, t.id, pos, t.x, t.y, t.grab_scene, t.arm_command);
+        const auto &t = ctx.zone2_tasks[i];
+        const char *pos_str = isEntryBlock(t.id) ? "[ENTRY]" : isExitBlock(t.id) ? "[EXIT]" : "";
+        if (t.grab_adjacent_block >= 0)
+            RCLCPP_INFO(rclcpp::get_logger("planner"), "  #%zu block %d %s (%.2f,%.2f) grab_adj=%d",
+                        i, t.id, pos_str, t.x, t.y, t.grab_adjacent_block);
+        else
+            RCLCPP_INFO(rclcpp::get_logger("planner"), "  #%zu block %d %s (%.2f,%.2f)",
+                        i, t.id, pos_str, t.x, t.y);
     }
 }
