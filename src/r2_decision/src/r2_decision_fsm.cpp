@@ -1,5 +1,7 @@
 #include "r2_decision/r2_decision_node.hpp"
 
+#include <cmath>
+
 /*
  * ============================================================================
  * 整体状态流转图
@@ -154,6 +156,8 @@ const char *Zone1State::name() const
         return "Zone1/NavPoint";
     case Sub::NAV_POINT_Y:
         return "Zone1/NavPointY";
+    case Sub::VISION_ALIGN:
+        return "Zone1/VisionAlign";
     case Sub::OPERATE:
         return "Zone1/Operate";
     case Sub::DOCK:
@@ -184,6 +188,9 @@ std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &ac
 //   3. FINISH 子状态: 构建 Zone2 任务列表, 切换到 Zone2
 std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act)
 {
+    if (sub_ == Sub::VISION_ALIGN)
+        tickVisionAlign(ctx, act);
+
     if (sub_ == Sub::DOCK)
         checkDockTransition(ctx, act); // 等导航到对接站后, 监控 spearhead
 
@@ -241,6 +248,7 @@ std::unique_ptr<TopState> Zone1State::handleEvent(Context &ctx, ActionDispatcher
 void Zone1State::onExit(Context &ctx, ActionDispatcher &act)
 {
     (void)ctx;
+    act.stopCmdVel();
     act.enableSpear(false);
     act.enableLightboard(false);
 }
@@ -288,6 +296,14 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         const auto &t = it->second;
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d y=%.2f (x=%.2f)", t.id, t.y, t.x);
         act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, 0, 1, ctx);
+        break;
+    }
+    case Sub::VISION_ALIGN:
+    {
+        ctx.vision_stable_count = 0;
+        ctx.vision_align_start_time = rclcpp::Clock().now();
+        act.enableSpear(true);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: VISION_ALIGN start");
         break;
     }
     case Sub::OPERATE:
@@ -401,7 +417,7 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::NAV_POINT_Y:
-        // 第二段y完成 → OPERATE
+        // 第二段y完成 → VISION_ALIGN (spearhead点) 或 OPERATE (普通点)
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
@@ -412,8 +428,24 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
             }
             else
             {
-                sub_ = Sub::OPERATE;
+                const int pid = ctx.zone1_route_ids[ctx.zone1_index];
+                auto it = ctx.point_table.find(pid);
+                bool use_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
+                sub_ = use_spearhead ? Sub::VISION_ALIGN : Sub::OPERATE;
             }
+            enterSub(ctx, act);
+        }
+        break;
+
+    case Sub::VISION_ALIGN:
+        if (e.type == EventType::VISION_ALIGN_DONE)
+        {
+            act.stopCmdVel();
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Vision align timeout/failed, degrade to OPERATE");
+            else
+                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Vision align OK");
+            sub_ = Sub::OPERATE;
             enterSub(ctx, act);
         }
         break;
@@ -578,6 +610,74 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
     }
     return nullptr;
+}
+
+/*
+ * tickVisionAlign — bang-bang 视觉对齐
+ *   画面左/右 → robot x (前/后)
+ *   灰柱太窄(远)/太宽(近) → robot y (左/右)
+ *   对齐条件: |offset| < threshold AND |width - expected| < tolerance 持续 N 帧
+ */
+void Zone1State::tickVisionAlign(Context &ctx, ActionDispatcher &act)
+{
+    // ── timeout check ──
+    auto elapsed = (rclcpp::Clock().now() - ctx.vision_align_start_time).seconds();
+    if (elapsed > ctx.vision_align_timeout_s)
+    {
+        RCLCPP_WARN(rclcpp::get_logger("fsm"), "Vision align timeout (%.1fs)", elapsed);
+        act.postEvent({EventType::VISION_ALIGN_DONE, false});
+        return;
+    }
+
+    // ── lost target → stop, reset ──
+    if (!ctx.cyl_valid)
+    {
+        act.stopCmdVel();
+        ctx.vision_stable_count = 0;
+        return;
+    }
+
+    // ── bang-bang: compute fixed speeds ──
+    double vx = 0.0;  // robot x (image left/right)
+    double vy = 0.0;  // robot y (image depth)
+
+    // lateral: image left/right → robot x
+    if (ctx.cyl_norm_offset < -ctx.vision_align_offset_threshold)
+        vx = -ctx.vision_align_speed_x;   // image left → robot -x
+    else if (ctx.cyl_norm_offset > ctx.vision_align_offset_threshold)
+        vx = ctx.vision_align_speed_x;    // image right → robot +x
+
+    // depth: cylinder width → robot y
+    double width_error = ctx.cyl_width - ctx.vision_align_expected_width;
+    if (width_error < -ctx.vision_align_width_tolerance)
+        vy = -ctx.vision_align_speed_y_fwd;   // too narrow (far) → robot -y
+    else if (width_error > ctx.vision_align_width_tolerance)
+        vy = ctx.vision_align_speed_y_back;   // too wide (close) → robot +y
+
+    // ── send velocity ──
+    act.publishCmdVel(vx, vy);
+
+    // ── check alignment: offset ok AND distance ok ──
+    bool offset_ok = std::abs(ctx.cyl_norm_offset) <= ctx.vision_align_offset_threshold;
+    bool width_ok = std::abs(width_error) <= ctx.vision_align_width_tolerance;
+    bool overlap_ok = ctx.cyl_overlap >= ctx.vision_align_overlap_threshold;
+
+    if ((offset_ok || overlap_ok) && width_ok)
+    {
+        ++ctx.vision_stable_count;
+        if (ctx.vision_stable_count >= ctx.vision_align_stable_required)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("fsm"),
+                        "Vision align DONE: offset=%.3f overlap=%.2f width=%.0f (%d frames)",
+                        ctx.cyl_norm_offset, ctx.cyl_overlap, ctx.cyl_width,
+                        ctx.vision_stable_count);
+            act.postEvent({EventType::VISION_ALIGN_DONE, true});
+        }
+    }
+    else
+    {
+        ctx.vision_stable_count = 0;
+    }
 }
 
 /*

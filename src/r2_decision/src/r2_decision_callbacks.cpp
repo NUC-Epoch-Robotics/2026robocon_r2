@@ -78,3 +78,25 @@ void R2DecisionNode::onButtonState(const std_msgs::msg::UInt8::SharedPtr msg)
     if (button == ButtonState::ZONE2_RETRY)  postEvent(EventType::ZONE2_RETRY);
     if (button == ButtonState::ZONE3_RETRY)  postEvent(EventType::ZONE3_RETRY);
 }
+
+// ── cylinder alignment callbacks ─────────────────────────────
+
+void R2DecisionNode::onCylValid(const std_msgs::msg::Bool::SharedPtr msg)
+{
+    ctx_.cyl_valid = msg->data;
+}
+
+void R2DecisionNode::onCylOffset(const std_msgs::msg::Float32::SharedPtr msg)
+{
+    ctx_.cyl_norm_offset = msg->data;
+}
+
+void R2DecisionNode::onCylOverlap(const std_msgs::msg::Float32::SharedPtr msg)
+{
+    ctx_.cyl_overlap = msg->data;
+}
+
+void R2DecisionNode::onCylWidth(const std_msgs::msg::Float32::SharedPtr msg)
+{
+    ctx_.cyl_width = msg->data;
+}
