@@ -1,11 +1,214 @@
 from collections import deque
 from typing import Deque, List, Optional
 
+import ctypes as ct
+import ctypes.util
 import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32
+
+
+# ── libuvc ctypes wrapper (V4L2 broken on Jetson) ────────────
+class _UvcFrame(ct.Structure):
+    """Mirrors uvc_frame from libuvc."""
+    _fields_ = [
+        ("data", ct.c_void_p),
+        ("data_bytes", ct.c_size_t),
+        ("width", ct.c_uint32),
+        ("height", ct.c_uint32),
+        ("frame_format", ct.c_int),  # uvc_frame_format enum
+        ("step", ct.c_size_t),
+        ("sequence", ct.c_uint32),
+        ("capture_time", ct.c_int64 * 2),  # timeval-ish
+        ("source", ct.c_void_p),
+        ("library_owns_data", ct.c_uint8),
+    ]
+
+
+class _UvcStreamCtrl(ct.Structure):
+    """Mirrors uvc_stream_ctrl_t."""
+    _fields_ = [
+        ("bmHint", ct.c_uint16),
+        ("bFormatIndex", ct.c_uint8),
+        ("bFrameIndex", ct.c_uint8),
+        ("dwFrameInterval", ct.c_uint32),
+        ("wKeyFrameRate", ct.c_uint16),
+        ("wPFrameRate", ct.c_uint16),
+        ("wCompQuality", ct.c_uint16),
+        ("wCompWindowSize", ct.c_uint16),
+        ("wDelay", ct.c_uint16),
+        ("dwMaxVideoFrameSize", ct.c_uint32),
+        ("dwMaxPayloadTransferSize", ct.c_uint32),
+        ("dwClockFrequency", ct.c_uint32),
+        ("bmFramingInfo", ct.c_uint8),
+        ("bPreferredVersion", ct.c_uint8),
+        ("bMinVersion", ct.c_uint8),
+        ("bMaxVersion", ct.c_uint8),
+        ("bInterfaceNumber", ct.c_uint8),
+    ]
+
+
+# uvc_frame_format enum value for MJPEG
+_UVC_FRAME_FORMAT_MJPEG = 11
+
+
+class LibuvcCamera:
+    """Minimal ctypes wrapper around libuvc for MJPEG capture."""
+
+    def __init__(self, vid: int, pid: int, width: int, height: int, fps: int,
+                 lib_path: str = ""):
+        self._ctx = ct.c_void_p()
+        self._dev = ct.c_void_p()
+        self._devh = ct.c_void_p()
+        self._strmh = ct.c_void_p()  # stream handle
+        self._streaming = False
+        self._ctrl = _UvcStreamCtrl()
+
+        # find libuvc.so
+        so_path = lib_path or self._find_so()
+        self._lib = ct.CDLL(so_path)
+
+        self._setup_prototypes()
+
+        # uvc_init
+        ret = self._lib.uvc_init(ct.byref(self._ctx), None)
+        if ret != 0:
+            raise RuntimeError(f"uvc_init failed: {ret}")
+
+        # uvc_find_device
+        ret = self._lib.uvc_find_device(
+            self._ctx, ct.byref(self._dev), vid, pid, None
+        )
+        if ret != 0:
+            self._lib.uvc_exit(self._ctx)
+            raise RuntimeError(f"uvc_find_device({hex(vid)}:{hex(pid)}) failed: {ret}")
+
+        # uvc_open
+        ret = self._lib.uvc_open(self._dev, ct.byref(self._devh))
+        if ret != 0:
+            self._lib.uvc_unref_device(self._dev)
+            self._lib.uvc_exit(self._ctx)
+            raise RuntimeError(f"uvc_open failed: {ret}")
+
+        # uvc_get_stream_ctrl_format_size
+        ret = self._lib.uvc_get_stream_ctrl_format_size(
+            self._devh, ct.byref(self._ctrl),
+            _UVC_FRAME_FORMAT_MJPEG, width, height, fps,
+        )
+        if ret != 0:
+            self._lib.uvc_close(self._devh)
+            self._lib.uvc_unref_device(self._dev)
+            self._lib.uvc_exit(self._ctx)
+            raise RuntimeError(f"uvc_get_stream_ctrl failed: {ret}")
+
+    @staticmethod
+    def _find_so() -> str:
+        """Try common locations for libuvc.so."""
+        candidates = [
+            "/usr/local/lib/libuvc.so",
+            "/usr/lib/libuvc.so",
+            str((ct.util.find_library("uvc") or "")),
+        ]
+        import os
+        home = os.path.expanduser("~")
+        candidates.insert(0, os.path.join(home, "Desktop/libuvc/build/libuvc.so"))
+        for p in candidates:
+            if p and os.path.isfile(p):
+                return p
+        raise FileNotFoundError("libuvc.so not found. Set 'uvc_lib_path' parameter.")
+
+    def _setup_prototypes(self):
+        lib = self._lib
+        # uvc_init(ctx, usb_ctx) -> int
+        lib.uvc_init.argtypes = [ct.POINTER(ct.c_void_p), ct.c_void_p]
+        lib.uvc_init.restype = ct.c_int
+        # uvc_find_device(ctx, dev, vid, pid, sn) -> int
+        lib.uvc_find_device.argtypes = [
+            ct.c_void_p, ct.POINTER(ct.c_void_p),
+            ct.c_int, ct.c_int, ct.c_char_p,
+        ]
+        lib.uvc_find_device.restype = ct.c_int
+        # uvc_open(dev, devh) -> int
+        lib.uvc_open.argtypes = [ct.c_void_p, ct.POINTER(ct.c_void_p)]
+        lib.uvc_open.restype = ct.c_int
+        # uvc_get_stream_ctrl_format_size(devh, ctrl, format, w, h, fps) -> int
+        lib.uvc_get_stream_ctrl_format_size.argtypes = [
+            ct.c_void_p, ct.POINTER(_UvcStreamCtrl),
+            ct.c_int, ct.c_int, ct.c_int, ct.c_int,
+        ]
+        lib.uvc_get_stream_ctrl_format_size.restype = ct.c_int
+        # uvc_stream_open_ctrl(devh, strmh, ctrl) -> int
+        lib.uvc_stream_open_ctrl.argtypes = [
+            ct.c_void_p, ct.POINTER(ct.c_void_p), ct.POINTER(_UvcStreamCtrl),
+        ]
+        lib.uvc_stream_open_ctrl.restype = ct.c_int
+        # uvc_stream_get_frame(strmh, frame, timeout_us) -> int
+        lib.uvc_stream_get_frame.argtypes = [
+            ct.c_void_p, ct.POINTER(ct.POINTER(_UvcFrame)), ct.c_int32,
+        ]
+        lib.uvc_stream_get_frame.restype = ct.c_int
+        # uvc_stream_close(strmh)
+        lib.uvc_stream_close.argtypes = [ct.c_void_p]
+        lib.uvc_stream_close.restype = None
+        # uvc_close(devh)
+        lib.uvc_close.argtypes = [ct.c_void_p]
+        lib.uvc_close.restype = None
+        # uvc_unref_device(dev)
+        lib.uvc_unref_device.argtypes = [ct.c_void_p]
+        lib.uvc_unref_device.restype = None
+        # uvc_exit(ctx)
+        lib.uvc_exit.argtypes = [ct.c_void_p]
+        lib.uvc_exit.restype = None
+
+    def start(self):
+        if self._streaming:
+            return
+        # uvc_stream_open_ctrl: open stream and get stream handle
+        ret = self._lib.uvc_stream_open_ctrl(
+            self._devh, ct.byref(self._strmh), ct.byref(self._ctrl)
+        )
+        if ret != 0:
+            raise RuntimeError(f"uvc_stream_open_ctrl failed: {ret}")
+        self._streaming = True
+
+    def read_frame(self, timeout_us: int = 2_000_000) -> Optional[np.ndarray]:
+        """Read one MJPEG frame, return BGR numpy array or None."""
+        if not self._streaming or not self._strmh:
+            return None
+        frame_ptr = ct.POINTER(_UvcFrame)()
+        ret = self._lib.uvc_stream_get_frame(
+            self._strmh, ct.byref(frame_ptr), timeout_us
+        )
+        if ret != 0 or not frame_ptr:
+            return None
+        f = frame_ptr.contents
+        if not f.data or f.data_bytes == 0:
+            return None
+        # MJPEG → numpy
+        buf = ct.cast(f.data, ct.POINTER(ct.c_uint8 * f.data_bytes)).contents
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        return img
+
+    def stop(self):
+        if self._streaming and self._strmh:
+            self._lib.uvc_stream_close(self._strmh)
+            self._strmh = ct.c_void_p()
+            self._streaming = False
+
+    def close(self):
+        self.stop()
+        if self._devh:
+            self._lib.uvc_close(self._devh)
+            self._devh = ct.c_void_p()
+        if self._dev:
+            self._lib.uvc_unref_device(self._dev)
+            self._dev = ct.c_void_p()
+        if self._ctx:
+            self._lib.uvc_exit(self._ctx)
+            self._ctx = ct.c_void_p()
 
 
 class SpearheadDetectorNode(Node):
@@ -19,6 +222,11 @@ class SpearheadDetectorNode(Node):
         self.declare_parameter("fps", 20.0)
         self.declare_parameter("frame_width", 640)
         self.declare_parameter("frame_height", 480)
+        # libuvc backend (when V4L2 is broken)
+        self.declare_parameter("use_libuvc", True)
+        self.declare_parameter("uvc_vid", 0x0c45)
+        self.declare_parameter("uvc_pid", 0x6368)
+        self.declare_parameter("uvc_lib_path", "")
         self.declare_parameter("roi_x", 0)
         self.declare_parameter("roi_y", 0)
         self.declare_parameter("roi_w", 0)
@@ -67,6 +275,12 @@ class SpearheadDetectorNode(Node):
         self.flip_horizontal = bool(self.get_parameter("flip_horizontal").value)
         self.enabled = bool(self.get_parameter("start_enabled").value)
 
+        # ── libuvc params ────────────────────────────────────────
+        self.use_libuvc = bool(self.get_parameter("use_libuvc").value)
+        self.uvc_vid = int(self.get_parameter("uvc_vid").value)
+        self.uvc_pid = int(self.get_parameter("uvc_pid").value)
+        self.uvc_lib_path = str(self.get_parameter("uvc_lib_path").value)
+
         # ── read cylinder params ─────────────────────────────────
         self.cyl_roi_x = int(self.get_parameter("cyl_roi_x").value)
         self.cyl_roi_y = int(self.get_parameter("cyl_roi_y").value)
@@ -91,6 +305,7 @@ class SpearheadDetectorNode(Node):
         )
 
         self.cap: Optional[cv2.VideoCapture] = None
+        self.uvc_cam: Optional[LibuvcCamera] = None
         self.history: Deque[bool] = deque(maxlen=self.history_size)
         self.last_published_exists = False
         self.last_open_failed = False
@@ -128,9 +343,8 @@ class SpearheadDetectorNode(Node):
         if not self._ensure_camera_open():
             return
 
-        assert self.cap is not None
-        ok, frame = self.cap.read()
-        if not ok or frame is None:
+        frame = self._read_frame()
+        if frame is None:
             return
 
         if self.flip_horizontal:
@@ -210,6 +424,31 @@ class SpearheadDetectorNode(Node):
         return frame[y : y + rh, x : x + rw]
 
     def _ensure_camera_open(self) -> bool:
+        # ── libuvc backend (V4L2 broken) ─────────────────────
+        if self.use_libuvc:
+            if self.uvc_cam is not None:
+                return True
+            try:
+                self.uvc_cam = LibuvcCamera(
+                    vid=self.uvc_vid, pid=self.uvc_pid,
+                    width=self.frame_width, height=self.frame_height,
+                    fps=int(self.fps), lib_path=self.uvc_lib_path,
+                )
+                self.uvc_cam.start()
+                self.last_open_failed = False
+                self.get_logger().info(
+                    f"UVC camera opened: {hex(self.uvc_vid)}:{hex(self.uvc_pid)} "
+                    f"{self.frame_width}x{self.frame_height}@{int(self.fps)}fps MJPEG"
+                )
+                return True
+            except Exception as e:
+                if not self.last_open_failed:
+                    self.get_logger().error(f"Failed to open UVC camera: {e}")
+                self.last_open_failed = True
+                self.uvc_cam = None
+                return False
+
+        # ── V4L2 / cv2 backend ───────────────────────────────
         if self.cap is not None and self.cap.isOpened():
             return True
 
@@ -229,9 +468,32 @@ class SpearheadDetectorNode(Node):
         return True
 
     def _release_camera(self) -> None:
+        if self.use_libuvc:
+            if self.uvc_cam is not None:
+                try:
+                    self.uvc_cam.close()
+                except Exception:
+                    pass
+                self.uvc_cam = None
+            return
         if self.cap is not None and self.cap.isOpened():
             self.cap.release()
         self.cap = None
+
+    def _read_frame(self) -> Optional[np.ndarray]:
+        """Read one frame from the active backend, return BGR numpy array or None."""
+        if self.use_libuvc:
+            if self.uvc_cam is None:
+                return None
+            try:
+                return self.uvc_cam.read_frame(timeout_us=2_000_000)
+            except Exception:
+                return None
+        # V4L2 / cv2
+        if self.cap is None or not self.cap.isOpened():
+            return None
+        ok, frame = self.cap.read()
+        return frame if ok else None
 
     def _publish_exists(self, exists: bool) -> None:
         self.last_published_exists = exists
