@@ -1103,17 +1103,17 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::ROTATE_GRAB:
-        // 转向完成 → 发机械臂指令抓取 → 下一个点
+        // 转向完成 → 发机械臂指令抓取相邻格KFS → 等 ARM_DONE
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
                 RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2: rotate_grab nav failed");
-            // TODO: 发机械臂指令抓取相邻格KFS
-            // 暂时直接跳到下一个点
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2: ROTATE_GRAB done, advance");
-            ++ctx.zone2_index;
-            sub_ = Sub::NAV_POINT;
-            enterSub(ctx, act);
+            const auto &t = ctx.zone2_tasks[ctx.zone2_index];
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2: ROTATE_GRAB done, grab_adj=%d grab_finsh=%d",
+                        t.grab_adjacent_block, t.grab_is_finsh);
+            ctx.zone2_arm_retry = 0;
+            act.sendArmCommand(t.grab_is_finsh);
+            sub_ = Sub::GRAB;  // 等 ARM_DONE，由 GRAB case 处理后续
         }
         break;
 
@@ -1229,6 +1229,19 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
                 RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2 arm failed after retry, skip");
 
             ctx.zone2_arm_retry = 0;
+
+            // 检查当前任务是否有台阶需要走
+            {
+                const auto &t = ctx.zone2_tasks[ctx.zone2_index];
+                if (t.stair_cmd == 1 || t.stair_cmd == 2)
+                {
+                    RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2: grab done, stair_cmd=%d", t.stair_cmd);
+                    sub_ = (t.stair_cmd == 1) ? Sub::UP_STAIRS : Sub::DOWN_STAIRS;
+                    enterSub(ctx, act);
+                    break;
+                }
+            }
+
             ++ctx.zone2_index;
             sub_ = Sub::NAV_POINT;
             enterSub(ctx, act);
