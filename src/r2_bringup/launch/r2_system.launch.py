@@ -206,15 +206,16 @@ def generate_launch_description():
                 'uvc_pid': 0x6368,
                 'uvc_lib_path': '',  # auto-detect, or set e.g. '/home/epoch/Desktop/libuvc/build/libuvc.so'
                 # gray cylinder ROI (on 1920x1080 frame)
+                # 600x1080 area starting at x=485 (left-center of frame)
                 'cyl_roi_x': 485,
                 'cyl_roi_y': 0,
                 'cyl_roi_w': 600,
                 'cyl_roi_h': 1080,
                 'cyl_band_width': 120,
-                'cyl_s_max': 60,
-                'cyl_v_min': 80,
-                'cyl_v_max': 220,
-                'cyl_min_area': 3000.0,
+                'cyl_s_max': 30,
+                'cyl_v_min': 50,
+                'cyl_v_max': 130,
+                'cyl_min_area': 500.0,
                 'cyl_expected_width': 120.0,
             }],
         ),
