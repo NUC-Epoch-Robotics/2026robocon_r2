@@ -152,11 +152,28 @@ class LibuvcCamera:
             ct.c_void_p, ct.POINTER(ct.c_void_p), ct.POINTER(_UvcStreamCtrl),
         ]
         lib.uvc_stream_open_ctrl.restype = ct.c_int
+        # uvc_stream_start(strmh, cb, user_ptr, flags) -> int
+        lib.uvc_stream_start.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_uint8]
+        lib.uvc_stream_start.restype = ct.c_int
+        # uvc controls for reset
+        lib.uvc_set_ae_mode.argtypes = [ct.c_void_p, ct.c_uint8]
+        lib.uvc_set_ae_mode.restype = ct.c_int
+        lib.uvc_set_brightness.argtypes = [ct.c_void_p, ct.c_int16]
+        lib.uvc_set_brightness.restype = ct.c_int
+        lib.uvc_set_contrast.argtypes = [ct.c_void_p, ct.c_uint16]
+        lib.uvc_set_contrast.restype = ct.c_int
+        lib.uvc_set_saturation.argtypes = [ct.c_void_p, ct.c_uint16]
+        lib.uvc_set_saturation.restype = ct.c_int
+        lib.uvc_set_gamma.argtypes = [ct.c_void_p, ct.c_uint16]
+        lib.uvc_set_gamma.restype = ct.c_int
         # uvc_stream_get_frame(strmh, frame, timeout_us) -> int
         lib.uvc_stream_get_frame.argtypes = [
             ct.c_void_p, ct.POINTER(ct.POINTER(_UvcFrame)), ct.c_int32,
         ]
         lib.uvc_stream_get_frame.restype = ct.c_int
+        # uvc_stream_stop(strmh)
+        lib.uvc_stream_stop.argtypes = [ct.c_void_p]
+        lib.uvc_stream_stop.restype = None
         # uvc_stream_close(strmh)
         lib.uvc_stream_close.argtypes = [ct.c_void_p]
         lib.uvc_stream_close.restype = None
@@ -173,12 +190,24 @@ class LibuvcCamera:
     def start(self):
         if self._streaming:
             return
+        # reset camera settings
+        self._lib.uvc_set_ae_mode(self._devh, 2)      # auto exposure
+        self._lib.uvc_set_brightness(self._devh, 0)    # default brightness
+        self._lib.uvc_set_contrast(self._devh, 128)    # default contrast
+        self._lib.uvc_set_saturation(self._devh, 128)  # default saturation
+        self._lib.uvc_set_gamma(self._devh, 100)       # default gamma
         # uvc_stream_open_ctrl: open stream and get stream handle
         ret = self._lib.uvc_stream_open_ctrl(
             self._devh, ct.byref(self._strmh), ct.byref(self._ctrl)
         )
         if ret != 0:
             raise RuntimeError(f"uvc_stream_open_ctrl failed: {ret}")
+        # uvc_stream_start: start USB transfers (required before get_frame)
+        ret = self._lib.uvc_stream_start(self._strmh, None, None, 0)
+        if ret != 0:
+            self._lib.uvc_stream_close(self._strmh)
+            self._strmh = ct.c_void_p()
+            raise RuntimeError(f"uvc_stream_start failed: {ret}")
         self._streaming = True
 
     def read_frame(self, timeout_us: int = 2_000_000) -> Optional[np.ndarray]:
@@ -189,19 +218,26 @@ class LibuvcCamera:
         ret = self._lib.uvc_stream_get_frame(
             self._strmh, ct.byref(frame_ptr), timeout_us
         )
-        if ret != 0 or not frame_ptr:
+        if ret != 0:
+            # uvc_stream_get_frame failed
+            return None
+        if not frame_ptr:
             return None
         f = frame_ptr.contents
         if not f.data or f.data_bytes == 0:
             return None
         # MJPEG → numpy
-        buf = ct.cast(f.data, ct.POINTER(ct.c_uint8 * f.data_bytes)).contents
-        arr = np.frombuffer(buf, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        return img
+        try:
+            buf = ct.cast(f.data, ct.POINTER(ct.c_uint8 * f.data_bytes)).contents
+            arr = np.frombuffer(buf, dtype=np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            return img
+        except Exception:
+            return None
 
     def stop(self):
         if self._streaming and self._strmh:
+            self._lib.uvc_stream_stop(self._strmh)
             self._lib.uvc_stream_close(self._strmh)
             self._strmh = ct.c_void_p()
             self._streaming = False
@@ -353,6 +389,7 @@ class SpearheadDetectorNode(Node):
 
         frame = self._read_frame()
         if frame is None:
+            self.get_logger().warn_throttle(2.0, "read_frame returned None")
             return
 
         if self.flip_horizontal:
@@ -494,8 +531,12 @@ class SpearheadDetectorNode(Node):
             if self.uvc_cam is None:
                 return None
             try:
-                return self.uvc_cam.read_frame(timeout_us=2_000_000)
-            except Exception:
+                img = self.uvc_cam.read_frame(timeout_us=2_000_000)
+                if img is None:
+                    self.get_logger().warn_throttle(2.0, "uvc read_frame: None (decode failed or no data)")
+                return img
+            except Exception as e:
+                self.get_logger().error_throttle(2.0, f"uvc read_frame exception: {e}")
                 return None
         # V4L2 / cv2
         if self.cap is None or not self.cap.isOpened():
