@@ -200,6 +200,11 @@ def generate_launch_description():
                 'frame_width': 1920,
                 'frame_height': 1080,
                 'start_enabled': False,
+                # libuvc backend (V4L2 broken on Jetson)
+                'use_libuvc': True,
+                'uvc_vid': 0x0c45,
+                'uvc_pid': 0x6368,
+                'uvc_lib_path': '',  # auto-detect, or set e.g. '/home/epoch/Desktop/libuvc/build/libuvc.so'
                 # gray cylinder ROI (on 1920x1080 frame)
                 'cyl_roi_x': 485,
                 'cyl_roi_y': 0,
