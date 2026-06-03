@@ -51,7 +51,7 @@ class _UvcStreamCtrl(ct.Structure):
 
 
 # uvc_frame_format enum value for MJPEG
-_UVC_FRAME_FORMAT_MJPEG = 11
+_UVC_FRAME_FORMAT_MJPEG = 7
 
 
 class LibuvcCamera:
@@ -92,16 +92,20 @@ class LibuvcCamera:
             self._lib.uvc_exit(self._ctx)
             raise RuntimeError(f"uvc_open failed: {ret}")
 
-        # uvc_get_stream_ctrl_format_size
-        ret = self._lib.uvc_get_stream_ctrl_format_size(
-            self._devh, ct.byref(self._ctrl),
-            _UVC_FRAME_FORMAT_MJPEG, width, height, fps,
-        )
-        if ret != 0:
-            self._lib.uvc_close(self._devh)
-            self._lib.uvc_unref_device(self._dev)
-            self._lib.uvc_exit(self._ctx)
-            raise RuntimeError(f"uvc_get_stream_ctrl failed: {ret}")
+        # Manually fill stream ctrl (bypass broken uvc_get_stream_ctrl_format_size)
+        # Values from C example: bFormatIndex=1 (MJPEG), bFrameIndex=1 (1920x1080)
+        self._ctrl.bmHint = 1
+        self._ctrl.bFormatIndex = 1  # MJPEG format index
+        self._ctrl.bFrameIndex = 1   # 1920x1080 frame index
+        self._ctrl.dwFrameInterval = int(10_000_000 / fps)  # 30fps → 333333
+        self._ctrl.wKeyFrameRate = 0
+        self._ctrl.wPFrameRate = 0
+        self._ctrl.wCompQuality = 0
+        self._ctrl.wCompWindowSize = 0
+        self._ctrl.wDelay = 0
+        self._ctrl.dwMaxVideoFrameSize = width * height * 2  # rough estimate
+        self._ctrl.dwMaxPayloadTransferSize = 3072
+        self._ctrl.bInterfaceNumber = 1
 
     @staticmethod
     def _find_so() -> str:
@@ -139,6 +143,10 @@ class LibuvcCamera:
             ct.c_int, ct.c_int, ct.c_int, ct.c_int,
         ]
         lib.uvc_get_stream_ctrl_format_size.restype = ct.c_int
+        # uvc_print_stream_ctrl(ctrl, stream) — debug
+        if hasattr(lib, 'uvc_print_stream_ctrl'):
+            lib.uvc_print_stream_ctrl.argtypes = [ct.POINTER(_UvcStreamCtrl), ct.c_void_p]
+            lib.uvc_print_stream_ctrl.restype = None
         # uvc_stream_open_ctrl(devh, strmh, ctrl) -> int
         lib.uvc_stream_open_ctrl.argtypes = [
             ct.c_void_p, ct.POINTER(ct.c_void_p), ct.POINTER(_UvcStreamCtrl),
