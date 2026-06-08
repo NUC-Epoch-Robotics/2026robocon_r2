@@ -177,7 +177,7 @@ struct Context
     double vision_align_speed_y_fwd{0.08};         // forward correction (too narrow → robot -y)
     double vision_align_speed_y_back{0.08};        // backward correction (too wide → robot +y)
     // expected cylinder width (pixels) at correct distance
-    double vision_align_expected_width{120.0};
+    double vision_align_expected_width{110.0};
     double vision_align_width_tolerance{10.0};     // |detected - expected| < this → distance ok
     std::vector<uint8_t> lightboard_map;
     std::vector<uint8_t> latest_lightboard_map;
