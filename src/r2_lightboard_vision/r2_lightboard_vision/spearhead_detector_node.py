@@ -390,6 +390,13 @@ class SpearheadDetectorNode(Node):
         # ── gray cylinder alignment detection ────────────────────
         self._detect_cylinder(frame)
 
+        # ── debug: show annotated frame ───────────────────────────
+        try:
+            cv2.imshow("spearhead_debug", frame)
+            cv2.waitKey(1)
+        except Exception:
+            pass
+
     def _detect_exists(self, crop: np.ndarray) -> bool:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -544,6 +551,32 @@ class SpearheadDetectorNode(Node):
         ry = max(0, self.cyl_roi_y)
         rw = min(self.cyl_roi_w, fw - rx)
         rh = min(self.cyl_roi_h, fh - ry)
+
+        # ── debug overlay helpers ────────────────────────────────
+        band_half_draw = self.cyl_band_width / 2.0
+        roi_cx_full = rx + rw / 2.0
+
+        def draw_roi():
+            """Draw ROI rect + center band lines + center line on frame."""
+            if rw <= 0 or rh <= 0:
+                return
+            # outer ROI (green)
+            cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), (0, 255, 0), 2)
+            # center band (red)
+            bl = int(roi_cx_full - band_half_draw)
+            br = int(roi_cx_full + band_half_draw)
+            cv2.line(frame, (bl, ry), (bl, ry + rh), (0, 0, 255), 2)
+            cv2.line(frame, (br, ry), (br, ry + rh), (0, 0, 255), 2)
+            # center line (blue)
+            cx = int(roi_cx_full)
+            cv2.line(frame, (cx, ry), (cx, ry + rh), (255, 0, 0), 1)
+            # label
+            cv2.putText(frame, f"ROI {rw}x{rh} band={self.cyl_band_width}",
+                        (rx + 5, ry + 25), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, (0, 255, 0), 2)
+
+        draw_roi()
+
         if rw <= 0 or rh <= 0:
             self._publish_cylinder(False, 0.0, 0.0, 0.0)
             return
@@ -565,6 +598,12 @@ class SpearheadDetectorNode(Node):
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # ── debug: draw all contours (faint cyan) ──
+        if contours:
+            shifted_all = [c + (rx, ry) for c in contours]
+            cv2.drawContours(frame, shifted_all, -1, (255, 255, 0), 1)
+
         if not contours:
             if self._frame_count % 60 == 0:
                 self.get_logger().warn(
@@ -576,6 +615,14 @@ class SpearheadDetectorNode(Node):
         # find largest contour
         best = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(best)
+
+        # ── debug: draw best contour + bbox (yellow) ──
+        best_shifted = best + (rx, ry)
+        bx_full, by_full, bw_full, bh_full = cv2.boundingRect(best_shifted)
+        cv2.drawContours(frame, [best_shifted], -1, (0, 255, 255), 2)
+        cv2.rectangle(frame, (bx_full, by_full),
+                      (bx_full + bw_full, by_full + bh_full), (255, 0, 255), 2)
+
         if area < self.cyl_min_area:
             if self._frame_count % 60 == 0:
                 self.get_logger().warn(
@@ -598,6 +645,12 @@ class SpearheadDetectorNode(Node):
         inter_left = max(bx, band_left)
         inter_right = min(bx + bw, band_right)
         overlap = max(0.0, inter_right - inter_left) / bw if bw > 0 else 0.0
+
+        # ── debug: status text ──
+        cv2.putText(frame,
+                    f"bw={bw} area={area:.0f} offset={norm_offset:+.3f} overlap={overlap:.2f}",
+                    (rx + 5, ry + 50), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 255), 1)
 
         if self._frame_count % 60 == 0:
             self.get_logger().info(

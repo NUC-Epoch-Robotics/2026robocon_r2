@@ -171,7 +171,7 @@ struct Context
     double vision_align_offset_threshold{0.05};   // |norm_offset| < this → aligned
     double vision_align_overlap_threshold{0.95};   // overlap >= this → aligned
     int vision_align_stable_required{5};           // consecutive aligned frames
-    double vision_align_timeout_s{10.0};
+    double vision_align_timeout_s{0.0};  // skip VISION_ALIGN, grab directly
     // fixed speeds for bang-bang (m/s)
     double vision_align_speed_x{0.08};             // lateral correction (image left/right → robot x)
     double vision_align_speed_y_fwd{0.08};         // forward correction (too narrow → robot -y)
