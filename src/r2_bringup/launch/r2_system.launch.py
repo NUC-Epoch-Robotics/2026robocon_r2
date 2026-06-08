@@ -219,12 +219,6 @@ def generate_launch_description():
                 'cyl_roi_w': 1720,
                 'cyl_roi_h': 1080,
                 'cyl_band_width': 110,
-                'cyl_s_max': 30,
-                'cyl_v_min': 50,
-                'cyl_v_max': 130,
-                'cyl_min_area': 500.0,
-                'cyl_min_aspect': 0.5,
-                'cyl_min_vert_fill': 0.05,
                 # template matching
                 'cyl_template_path': _template_path,
                 'cyl_template_threshold': 0.6,

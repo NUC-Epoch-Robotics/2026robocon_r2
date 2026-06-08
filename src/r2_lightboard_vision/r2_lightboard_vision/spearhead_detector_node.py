@@ -274,15 +274,6 @@ class SpearheadDetectorNode(Node):
         self.declare_parameter("cyl_roi_h", 1080)
         # inner target band width (centered in outer ROI), height = roi_h
         self.declare_parameter("cyl_band_width", 110)
-        # HSV thresholds for gray: low saturation, mid-high value
-        self.declare_parameter("cyl_s_max", 60)
-        self.declare_parameter("cyl_v_min", 80)
-        self.declare_parameter("cyl_v_max", 220)
-        # minimum contour area to accept as cylinder
-        self.declare_parameter("cyl_min_area", 3000.0)
-        # shape filters: cylinder is ~110x100, roughly square
-        self.declare_parameter("cyl_min_aspect", 0.5)       # height/width >= this
-        self.declare_parameter("cyl_min_vert_fill", 0.05)   # bbox height / roi height >= this
         # template matching: path to cylinder template image
         self.declare_parameter("cyl_template_path", "")
         self.declare_parameter("cyl_template_threshold", 0.6)  # min match score
@@ -320,12 +311,6 @@ class SpearheadDetectorNode(Node):
         self.cyl_roi_w = int(self.get_parameter("cyl_roi_w").value)
         self.cyl_roi_h = int(self.get_parameter("cyl_roi_h").value)
         self.cyl_band_width = int(self.get_parameter("cyl_band_width").value)
-        self.cyl_s_max = int(self.get_parameter("cyl_s_max").value)
-        self.cyl_v_min = int(self.get_parameter("cyl_v_min").value)
-        self.cyl_v_max = int(self.get_parameter("cyl_v_max").value)
-        self.cyl_min_area = float(self.get_parameter("cyl_min_area").value)
-        self.cyl_min_aspect = float(self.get_parameter("cyl_min_aspect").value)
-        self.cyl_min_vert_fill = float(self.get_parameter("cyl_min_vert_fill").value)
         self.cyl_expected_width = float(self.get_parameter("cyl_expected_width").value)
 
         # ── template matching ───────────────────────────────────
@@ -562,7 +547,7 @@ class SpearheadDetectorNode(Node):
     # ── gray cylinder detection ──────────────────────────────────
 
     def _detect_cylinder(self, frame: np.ndarray) -> None:
-        """Detect gray cylinder in outer ROI, publish offset / valid / overlap / width."""
+        """Detect gray cylinder via template matching, publish offset / valid / overlap / width."""
         self._frame_count += 1
         fh, fw = frame.shape[:2]
 
@@ -572,165 +557,72 @@ class SpearheadDetectorNode(Node):
         rw = min(self.cyl_roi_w, fw - rx)
         rh = min(self.cyl_roi_h, fh - ry)
 
-        # ── debug overlay helpers ────────────────────────────────
+        # ── debug overlay: ROI + center band ─────────────────────
         band_half_draw = self.cyl_band_width / 2.0
         roi_cx_full = rx + rw / 2.0
-
-        def draw_roi():
-            """Draw ROI rect + center band lines + center line on frame."""
-            if rw <= 0 or rh <= 0:
-                return
-            # outer ROI (green)
-            cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), (0, 255, 0), 2)
-            # center band (red)
-            bl = int(roi_cx_full - band_half_draw)
-            br = int(roi_cx_full + band_half_draw)
-            cv2.line(frame, (bl, ry), (bl, ry + rh), (0, 0, 255), 2)
-            cv2.line(frame, (br, ry), (br, ry + rh), (0, 0, 255), 2)
-            # center line (blue)
-            cx = int(roi_cx_full)
-            cv2.line(frame, (cx, ry), (cx, ry + rh), (255, 0, 0), 1)
-            # label
-            cv2.putText(frame, f"ROI {rw}x{rh} band={self.cyl_band_width}",
-                        (rx + 5, ry + 25), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (0, 255, 0), 2)
-
-        draw_roi()
+        cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), (0, 255, 0), 2)
+        bl = int(roi_cx_full - band_half_draw)
+        br = int(roi_cx_full + band_half_draw)
+        cv2.line(frame, (bl, ry), (bl, ry + rh), (0, 0, 255), 2)
+        cv2.line(frame, (br, ry), (br, ry + rh), (0, 0, 255), 2)
+        cv2.line(frame, (int(roi_cx_full), ry), (int(roi_cx_full), ry + rh), (255, 0, 0), 1)
+        cv2.putText(frame, f"ROI {rw}x{rh}", (rx + 5, ry + 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         if rw <= 0 or rh <= 0:
             self._publish_cylinder(False, 0.0, 0.0, 0.0)
             return
 
+        if self.cyl_template is None:
+            if self._frame_count % 60 == 0:
+                self.get_logger().warn("cyl: no template loaded!")
+            self._publish_cylinder(False, 0.0, 0.0, 0.0)
+            return
+
         roi = frame[ry : ry + rh, rx : rx + rw]
-        roi_cx = rw / 2.0  # center x of outer ROI
+        roi_cx = rw / 2.0
 
-        # ── template matching (preferred if available) ───────────
-        if self.cyl_template is not None:
-            result = cv2.matchTemplate(roi, self.cyl_template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        # ── template matching ────────────────────────────────────
+        result = cv2.matchTemplate(roi, self.cyl_template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-            if max_val >= self.cyl_template_threshold:
-                th, tw = self.cyl_template.shape[:2]
-                match_x = max_loc[0] + tw / 2.0
-                match_y = max_loc[1] + th / 2.0
-
-                # normalized offset: [-1, 1], positive = right in image
-                norm_offset = (match_x - roi_cx) / (roi_cx) if roi_cx > 0 else 0.0
-                norm_offset = max(-1.0, min(1.0, norm_offset))
-
-                # overlap: how centered is the match in the band
-                band_half = self.cyl_band_width / 2.0
-                band_left = roi_cx - band_half
-                band_right = roi_cx + band_half
-                inter_left = max(max_loc[0], band_left)
-                inter_right = min(max_loc[0] + tw, band_right)
-                overlap = max(0.0, inter_right - inter_left) / tw if tw > 0 else 0.0
-
-                # debug: draw match (cyan rectangle)
-                cv2.rectangle(frame,
-                              (rx + max_loc[0], ry + max_loc[1]),
-                              (rx + max_loc[0] + tw, ry + max_loc[1] + th),
-                              (255, 255, 0), 2)
-                cv2.putText(frame,
-                            f"TM score={max_val:.2f} bw={tw} offset={norm_offset:+.3f}",
-                            (rx + 5, ry + 50), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5, (255, 255, 0), 1)
-
-                if self._frame_count % 60 == 0:
-                    self.get_logger().info(
-                        f"cyl: TM OK score={max_val:.2f} bw={tw} offset={norm_offset:.3f} overlap={overlap:.2f}")
-                self._publish_cylinder(True, norm_offset, overlap, float(tw))
-                return
-            else:
-                # template match failed, fall through to HSV method
-                if self._frame_count % 60 == 0:
-                    self.get_logger().warn(f"cyl: TM score={max_val:.2f} < {self.cyl_template_threshold}")
-
-        # ── HSV + contour fallback ───────────────────────────────
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(
-            hsv,
-            np.array([0, 0, self.cyl_v_min], dtype=np.uint8),
-            np.array([180, self.cyl_s_max, self.cyl_v_max], dtype=np.uint8),
-        )
-
-        # morphological cleanup
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # ── debug: draw all contours (faint cyan) ──
-        if contours:
-            shifted_all = [c + (rx, ry) for c in contours]
-            cv2.drawContours(frame, shifted_all, -1, (255, 255, 0), 1)
-
-        if not contours:
+        if max_val < self.cyl_template_threshold:
             if self._frame_count % 60 == 0:
-                self.get_logger().warn(
-                    f"cyl: no contours | ROI {rx},{ry} {rw}x{rh} | "
-                    f"S<{self.cyl_s_max} V={self.cyl_v_min}-{self.cyl_v_max}")
+                self.get_logger().warn(f"cyl: TM score={max_val:.2f} < {self.cyl_template_threshold}")
+            cv2.putText(frame, f"TM score={max_val:.2f} < {self.cyl_template_threshold}",
+                        (rx + 5, ry + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
             self._publish_cylinder(False, 0.0, 0.0, 0.0)
             return
 
-        # find largest contour
-        best = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(best)
-
-        # ── debug: draw best contour + bbox (yellow) ──
-        best_shifted = best + (rx, ry)
-        bx_full, by_full, bw_full, bh_full = cv2.boundingRect(best_shifted)
-        cv2.drawContours(frame, [best_shifted], -1, (0, 255, 255), 2)
-        cv2.rectangle(frame, (bx_full, by_full),
-                      (bx_full + bw_full, by_full + bh_full), (255, 0, 255), 2)
-
-        if area < self.cyl_min_area:
-            if self._frame_count % 60 == 0:
-                self.get_logger().warn(
-                    f"cyl: area={area:.0f} < min={self.cyl_min_area}")
-            self._publish_cylinder(False, 0.0, 0.0, 0.0)
-            return
-
-        # bounding box
-        bx, by, bw, bh = cv2.boundingRect(best)
-
-        # ── shape filter: reject non-cylinder blobs ──────────────
-        aspect = bh / bw if bw > 0 else 0.0
-        vert_fill = bh / rh if rh > 0 else 0.0
-        if aspect < self.cyl_min_aspect or vert_fill < self.cyl_min_vert_fill:
-            if self._frame_count % 30 == 0:
-                self.get_logger().warn(
-                    f"cyl: shape reject aspect={aspect:.2f}(need>{self.cyl_min_aspect}) "
-                    f"vfill={vert_fill:.2f}(need>{self.cyl_min_vert_fill}) "
-                    f"area={area:.0f}")
-            self._publish_cylinder(False, 0.0, 0.0, 0.0)
-            return
-
-        cylinder_cx = bx + bw / 2.0
+        th, tw = self.cyl_template.shape[:2]
+        match_x = max_loc[0] + tw / 2.0
 
         # normalized offset: [-1, 1], positive = right in image
-        norm_offset = (cylinder_cx - roi_cx) / (roi_cx) if roi_cx > 0 else 0.0
+        norm_offset = (match_x - roi_cx) / (roi_cx) if roi_cx > 0 else 0.0
         norm_offset = max(-1.0, min(1.0, norm_offset))
 
-        # overlap: intersection of cylinder bbox with center band / bbox width
+        # overlap: how centered is the match in the band
         band_half = self.cyl_band_width / 2.0
         band_left = roi_cx - band_half
         band_right = roi_cx + band_half
-        inter_left = max(bx, band_left)
-        inter_right = min(bx + bw, band_right)
-        overlap = max(0.0, inter_right - inter_left) / bw if bw > 0 else 0.0
+        inter_left = max(max_loc[0], band_left)
+        inter_right = min(max_loc[0] + tw, band_right)
+        overlap = max(0.0, inter_right - inter_left) / tw if tw > 0 else 0.0
 
-        # ── debug: status text ──
+        # debug: draw match box (cyan)
+        cv2.rectangle(frame,
+                      (rx + max_loc[0], ry + max_loc[1]),
+                      (rx + max_loc[0] + tw, ry + max_loc[1] + th),
+                      (255, 255, 0), 2)
         cv2.putText(frame,
-                    f"HSV bw={bw} area={area:.0f} offset={norm_offset:+.3f} overlap={overlap:.2f}",
+                    f"TM={max_val:.2f} bw={tw} off={norm_offset:+.3f} ov={overlap:.2f}",
                     (rx + 5, ry + 50), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (0, 255, 255), 1)
+                    0.5, (255, 255, 0), 1)
 
         if self._frame_count % 60 == 0:
             self.get_logger().info(
-                f"cyl: HSV OK area={area:.0f} bw={bw} offset={norm_offset:.3f} overlap={overlap:.2f}")
-        self._publish_cylinder(True, norm_offset, overlap, float(bw))
+                f"cyl: TM OK score={max_val:.2f} bw={tw} offset={norm_offset:.3f} overlap={overlap:.2f}")
+        self._publish_cylinder(True, norm_offset, overlap, float(tw))
 
     def _publish_cylinder(self, valid: bool, offset: float, overlap: float, width: float) -> None:
         self.valid_pub.publish(Bool(data=valid))
