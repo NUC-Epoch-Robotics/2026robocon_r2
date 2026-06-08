@@ -16,6 +16,11 @@ setup(
                 "launch/grab_scene_detector.launch.py",
             ],
         ),
+        # template image for cylinder detection
+        (
+            "share/" + package_name,
+            ["r2_lightboard_vision/cylinder_template.jpg"],
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
