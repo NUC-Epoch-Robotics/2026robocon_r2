@@ -155,17 +155,6 @@ class LibuvcCamera:
         # uvc_stream_start(strmh, cb, user_ptr, flags) -> int
         lib.uvc_stream_start.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_uint8]
         lib.uvc_stream_start.restype = ct.c_int
-        # uvc controls for reset
-        lib.uvc_set_ae_mode.argtypes = [ct.c_void_p, ct.c_uint8]
-        lib.uvc_set_ae_mode.restype = ct.c_int
-        lib.uvc_set_brightness.argtypes = [ct.c_void_p, ct.c_int16]
-        lib.uvc_set_brightness.restype = ct.c_int
-        lib.uvc_set_contrast.argtypes = [ct.c_void_p, ct.c_uint16]
-        lib.uvc_set_contrast.restype = ct.c_int
-        lib.uvc_set_saturation.argtypes = [ct.c_void_p, ct.c_uint16]
-        lib.uvc_set_saturation.restype = ct.c_int
-        lib.uvc_set_gamma.argtypes = [ct.c_void_p, ct.c_uint16]
-        lib.uvc_set_gamma.restype = ct.c_int
         # uvc_stream_get_frame(strmh, frame, timeout_us) -> int
         lib.uvc_stream_get_frame.argtypes = [
             ct.c_void_p, ct.POINTER(ct.POINTER(_UvcFrame)), ct.c_int32,
@@ -190,12 +179,6 @@ class LibuvcCamera:
     def start(self):
         if self._streaming:
             return
-        # reset camera settings
-        self._lib.uvc_set_ae_mode(self._devh, 2)      # auto exposure
-        self._lib.uvc_set_brightness(self._devh, 0)    # default brightness
-        self._lib.uvc_set_contrast(self._devh, 128)    # default contrast
-        self._lib.uvc_set_saturation(self._devh, 128)  # default saturation
-        self._lib.uvc_set_gamma(self._devh, 100)       # default gamma
         # uvc_stream_open_ctrl: open stream and get stream handle
         ret = self._lib.uvc_stream_open_ctrl(
             self._devh, ct.byref(self._strmh), ct.byref(self._ctrl)
