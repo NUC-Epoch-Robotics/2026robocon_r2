@@ -285,12 +285,12 @@ class SpearheadDetectorNode(Node):
 
         # ── gray cylinder detection parameters ───────────────────
         # outer ROI for cylinder detection (on full frame)
-        self.declare_parameter("cyl_roi_x", 485)
+        self.declare_parameter("cyl_roi_x", 568)
         self.declare_parameter("cyl_roi_y", 0)
-        self.declare_parameter("cyl_roi_w", 600)
+        self.declare_parameter("cyl_roi_w", 550)
         self.declare_parameter("cyl_roi_h", 1080)
         # inner target band width (centered in outer ROI), height = roi_h
-        self.declare_parameter("cyl_band_width", 120)
+        self.declare_parameter("cyl_band_width", 110)
         # HSV thresholds for gray: low saturation, mid-high value
         self.declare_parameter("cyl_s_max", 60)
         self.declare_parameter("cyl_v_min", 80)
@@ -353,6 +353,7 @@ class SpearheadDetectorNode(Node):
         self.history: Deque[bool] = deque(maxlen=self.history_size)
         self.last_published_exists = False
         self.last_open_failed = False
+        self._frame_count = 0  # for debug logging throttle
 
         interval = 1.0 / max(self.fps, 1.0)
         self.timer = self.create_timer(interval, self.process_frame)
@@ -552,6 +553,7 @@ class SpearheadDetectorNode(Node):
 
     def _detect_cylinder(self, frame: np.ndarray) -> None:
         """Detect gray cylinder in outer ROI, publish offset / valid / overlap / width."""
+        self._frame_count += 1
         fh, fw = frame.shape[:2]
 
         # clamp ROI to frame
@@ -581,6 +583,10 @@ class SpearheadDetectorNode(Node):
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
+            if self._frame_count % 60 == 0:
+                self.get_logger().warn(
+                    f"cyl: no contours | ROI {rx},{ry} {rw}x{rh} | "
+                    f"S<{self.cyl_s_max} V={self.cyl_v_min}-{self.cyl_v_max}")
             self._publish_cylinder(False, 0.0, 0.0, 0.0)
             return
 
@@ -588,6 +594,9 @@ class SpearheadDetectorNode(Node):
         best = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(best)
         if area < self.cyl_min_area:
+            if self._frame_count % 60 == 0:
+                self.get_logger().warn(
+                    f"cyl: area={area:.0f} < min={self.cyl_min_area}")
             self._publish_cylinder(False, 0.0, 0.0, 0.0)
             return
 
@@ -607,6 +616,9 @@ class SpearheadDetectorNode(Node):
         inter_right = min(bx + bw, band_right)
         overlap = max(0.0, inter_right - inter_left) / bw if bw > 0 else 0.0
 
+        if self._frame_count % 60 == 0:
+            self.get_logger().info(
+                f"cyl: OK area={area:.0f} bw={bw} offset={norm_offset:.3f} overlap={overlap:.2f}")
         self._publish_cylinder(True, norm_offset, overlap, float(bw))
 
     def _publish_cylinder(self, valid: bool, offset: float, overlap: float, width: float) -> None:
