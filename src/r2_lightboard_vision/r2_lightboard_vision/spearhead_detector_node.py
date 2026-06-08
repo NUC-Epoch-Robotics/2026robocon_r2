@@ -268,9 +268,9 @@ class SpearheadDetectorNode(Node):
 
         # ── gray cylinder detection parameters ───────────────────
         # outer ROI for cylinder detection (on full frame)
-        self.declare_parameter("cyl_roi_x", 568)
+        self.declare_parameter("cyl_roi_x", 100)
         self.declare_parameter("cyl_roi_y", 0)
-        self.declare_parameter("cyl_roi_w", 550)
+        self.declare_parameter("cyl_roi_w", 1720)
         self.declare_parameter("cyl_roi_h", 1080)
         # inner target band width (centered in outer ROI), height = roi_h
         self.declare_parameter("cyl_band_width", 110)
@@ -280,6 +280,9 @@ class SpearheadDetectorNode(Node):
         self.declare_parameter("cyl_v_max", 220)
         # minimum contour area to accept as cylinder
         self.declare_parameter("cyl_min_area", 3000.0)
+        # shape filters: cylinder is ~110x100, roughly square
+        self.declare_parameter("cyl_min_aspect", 0.5)       # height/width >= this
+        self.declare_parameter("cyl_min_vert_fill", 0.05)   # bbox height / roi height >= this
         # expected cylinder width in pixels at correct distance
         self.declare_parameter("cyl_expected_width", 120.0)
 
@@ -318,6 +321,8 @@ class SpearheadDetectorNode(Node):
         self.cyl_v_min = int(self.get_parameter("cyl_v_min").value)
         self.cyl_v_max = int(self.get_parameter("cyl_v_max").value)
         self.cyl_min_area = float(self.get_parameter("cyl_min_area").value)
+        self.cyl_min_aspect = float(self.get_parameter("cyl_min_aspect").value)
+        self.cyl_min_vert_fill = float(self.get_parameter("cyl_min_vert_fill").value)
         self.cyl_expected_width = float(self.get_parameter("cyl_expected_width").value)
 
         # ── publishers ───────────────────────────────────────────
@@ -632,6 +637,19 @@ class SpearheadDetectorNode(Node):
 
         # bounding box
         bx, by, bw, bh = cv2.boundingRect(best)
+
+        # ── shape filter: reject non-cylinder blobs ──────────────
+        aspect = bh / bw if bw > 0 else 0.0
+        vert_fill = bh / rh if rh > 0 else 0.0
+        if aspect < self.cyl_min_aspect or vert_fill < self.cyl_min_vert_fill:
+            if self._frame_count % 30 == 0:
+                self.get_logger().warn(
+                    f"cyl: shape reject aspect={aspect:.2f}(need>{self.cyl_min_aspect}) "
+                    f"vfill={vert_fill:.2f}(need>{self.cyl_min_vert_fill}) "
+                    f"area={area:.0f}")
+            self._publish_cylinder(False, 0.0, 0.0, 0.0)
+            return
+
         cylinder_cx = bx + bw / 2.0
 
         # normalized offset: [-1, 1], positive = right in image

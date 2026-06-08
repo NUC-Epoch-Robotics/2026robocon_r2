@@ -50,7 +50,7 @@ def generate_launch_description():
                 'sim_mode': sim_mode,
                 'nav_frame_id': 'odom',
                 # 矛头基准点 (2号矛头), 间距200mm
-                'spearhead_base_x': -0.564,
+                'spearhead_base_x': -0.604,
                 'spearhead_base_y': -1.049,
                 'spearhead_base_z': -0.622,
                 'spearhead_spacing': 0.2,
@@ -206,16 +206,18 @@ def generate_launch_description():
                 'uvc_pid': 0x6368,
                 'uvc_lib_path': '',  # auto-detect, or set e.g. '/home/epoch/Desktop/libuvc/build/libuvc.so'
                 # gray cylinder ROI (on 1920x1080 frame)
-                # 568px from left, 550px wide, 110px center band
-                'cyl_roi_x': 568,
+                # near full-width scan: 100px margin each side
+                'cyl_roi_x': 100,
                 'cyl_roi_y': 0,
-                'cyl_roi_w': 550,
+                'cyl_roi_w': 1720,
                 'cyl_roi_h': 1080,
                 'cyl_band_width': 110,
                 'cyl_s_max': 30,
                 'cyl_v_min': 50,
                 'cyl_v_max': 130,
                 'cyl_min_area': 500.0,
+                'cyl_min_aspect': 0.5,
+                'cyl_min_vert_fill': 0.05,
                 'cyl_expected_width': 110.0,
             }],
         ),
