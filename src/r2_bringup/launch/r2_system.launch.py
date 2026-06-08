@@ -1,3 +1,5 @@
+import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -5,6 +7,11 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    # template image path (relative to this launch file)
+    _launch_dir = os.path.dirname(os.path.abspath(__file__))
+    _template_path = os.path.join(
+        _launch_dir, '..', 'r2_lightboard_vision', 'r2_lightboard_vision', 'cylinder_template.jpg')
+
     enable_lightboard = LaunchConfiguration('enable_lightboard')
     lightboard_camera_index = LaunchConfiguration('lightboard_camera_index')
     enable_spearhead = LaunchConfiguration('enable_spearhead')
@@ -218,6 +225,9 @@ def generate_launch_description():
                 'cyl_min_area': 500.0,
                 'cyl_min_aspect': 0.5,
                 'cyl_min_vert_fill': 0.05,
+                # template matching
+                'cyl_template_path': _template_path,
+                'cyl_template_threshold': 0.6,
                 'cyl_expected_width': 110.0,
             }],
         ),
