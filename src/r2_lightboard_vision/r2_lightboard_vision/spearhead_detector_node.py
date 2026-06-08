@@ -283,6 +283,9 @@ class SpearheadDetectorNode(Node):
         # shape filters: cylinder is ~110x100, roughly square
         self.declare_parameter("cyl_min_aspect", 0.5)       # height/width >= this
         self.declare_parameter("cyl_min_vert_fill", 0.05)   # bbox height / roi height >= this
+        # template matching: path to cylinder template image
+        self.declare_parameter("cyl_template_path", "")
+        self.declare_parameter("cyl_template_threshold", 0.6)  # min match score
         # expected cylinder width in pixels at correct distance
         self.declare_parameter("cyl_expected_width", 120.0)
 
@@ -324,6 +327,18 @@ class SpearheadDetectorNode(Node):
         self.cyl_min_aspect = float(self.get_parameter("cyl_min_aspect").value)
         self.cyl_min_vert_fill = float(self.get_parameter("cyl_min_vert_fill").value)
         self.cyl_expected_width = float(self.get_parameter("cyl_expected_width").value)
+
+        # ── template matching ───────────────────────────────────
+        self.cyl_template_path = str(self.get_parameter("cyl_template_path").value)
+        self.cyl_template_threshold = float(self.get_parameter("cyl_template_threshold").value)
+        self.cyl_template: Optional[np.ndarray] = None
+        if self.cyl_template_path:
+            self.cyl_template = cv2.imread(self.cyl_template_path, cv2.IMREAD_COLOR)
+            if self.cyl_template is not None:
+                self.get_logger().info(
+                    f"Template loaded: {self.cyl_template_path} {self.cyl_template.shape[:2]}")
+            else:
+                self.get_logger().warn(f"Failed to load template: {self.cyl_template_path}")
 
         # ── publishers ───────────────────────────────────────────
         self.exists_pub = self.create_publisher(Bool, "spearhead/exists", 10)
@@ -589,7 +604,49 @@ class SpearheadDetectorNode(Node):
         roi = frame[ry : ry + rh, rx : rx + rw]
         roi_cx = rw / 2.0  # center x of outer ROI
 
-        # HSV threshold for gray: low saturation, mid-high value
+        # ── template matching (preferred if available) ───────────
+        if self.cyl_template is not None:
+            result = cv2.matchTemplate(roi, self.cyl_template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+            if max_val >= self.cyl_template_threshold:
+                th, tw = self.cyl_template.shape[:2]
+                match_x = max_loc[0] + tw / 2.0
+                match_y = max_loc[1] + th / 2.0
+
+                # normalized offset: [-1, 1], positive = right in image
+                norm_offset = (match_x - roi_cx) / (roi_cx) if roi_cx > 0 else 0.0
+                norm_offset = max(-1.0, min(1.0, norm_offset))
+
+                # overlap: how centered is the match in the band
+                band_half = self.cyl_band_width / 2.0
+                band_left = roi_cx - band_half
+                band_right = roi_cx + band_half
+                inter_left = max(max_loc[0], band_left)
+                inter_right = min(max_loc[0] + tw, band_right)
+                overlap = max(0.0, inter_right - inter_left) / tw if tw > 0 else 0.0
+
+                # debug: draw match (cyan rectangle)
+                cv2.rectangle(frame,
+                              (rx + max_loc[0], ry + max_loc[1]),
+                              (rx + max_loc[0] + tw, ry + max_loc[1] + th),
+                              (255, 255, 0), 2)
+                cv2.putText(frame,
+                            f"TM score={max_val:.2f} bw={tw} offset={norm_offset:+.3f}",
+                            (rx + 5, ry + 50), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, (255, 255, 0), 1)
+
+                if self._frame_count % 60 == 0:
+                    self.get_logger().info(
+                        f"cyl: TM OK score={max_val:.2f} bw={tw} offset={norm_offset:.3f} overlap={overlap:.2f}")
+                self._publish_cylinder(True, norm_offset, overlap, float(tw))
+                return
+            else:
+                # template match failed, fall through to HSV method
+                if self._frame_count % 60 == 0:
+                    self.get_logger().warn(f"cyl: TM score={max_val:.2f} < {self.cyl_template_threshold}")
+
+        # ── HSV + contour fallback ───────────────────────────────
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(
             hsv,
@@ -666,13 +723,13 @@ class SpearheadDetectorNode(Node):
 
         # ── debug: status text ──
         cv2.putText(frame,
-                    f"bw={bw} area={area:.0f} offset={norm_offset:+.3f} overlap={overlap:.2f}",
+                    f"HSV bw={bw} area={area:.0f} offset={norm_offset:+.3f} overlap={overlap:.2f}",
                     (rx + 5, ry + 50), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, (0, 255, 255), 1)
 
         if self._frame_count % 60 == 0:
             self.get_logger().info(
-                f"cyl: OK area={area:.0f} bw={bw} offset={norm_offset:.3f} overlap={overlap:.2f}")
+                f"cyl: HSV OK area={area:.0f} bw={bw} offset={norm_offset:.3f} overlap={overlap:.2f}")
         self._publish_cylinder(True, norm_offset, overlap, float(bw))
 
     def _publish_cylinder(self, valid: bool, offset: float, overlap: float, width: float) -> None:
