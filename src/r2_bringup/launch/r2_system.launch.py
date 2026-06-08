@@ -7,10 +7,9 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    # template image path (relative to this launch file)
-    _launch_dir = os.path.dirname(os.path.abspath(__file__))
-    _template_path = os.path.join(
-        _launch_dir, '..', 'r2_lightboard_vision', 'r2_lightboard_vision', 'cylinder_template.jpg')
+    # template image path
+    _vision_share = get_package_share_directory('r2_lightboard_vision')
+    _template_path = os.path.join(_vision_share, 'cylinder_template.jpg')
 
     enable_lightboard = LaunchConfiguration('enable_lightboard')
     lightboard_camera_index = LaunchConfiguration('lightboard_camera_index')
