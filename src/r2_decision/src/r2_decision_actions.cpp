@@ -380,7 +380,7 @@ void ActionDispatcher::publishCmd(uint8_t status_bit, uint8_t is_finsh, uint8_t 
 // cmd_vel (visual align)
 // ==========================================================================
 
-void ActionDispatcher::publishCmdVel(double linear_x, double linear_y)
+void ActionDispatcher::publishCmdVel(double linear_x, double linear_y, double angular_z)
 {
     geometry_msgs::msg::Twist msg;
     msg.linear.x = linear_x;
@@ -388,7 +388,7 @@ void ActionDispatcher::publishCmdVel(double linear_x, double linear_y)
     msg.linear.z = 0.0;
     msg.angular.x = 0.0;
     msg.angular.y = 0.0;
-    msg.angular.z = 0.0;
+    msg.angular.z = angular_z;
     cmd_vel_pub_->publish(msg);
 }
 

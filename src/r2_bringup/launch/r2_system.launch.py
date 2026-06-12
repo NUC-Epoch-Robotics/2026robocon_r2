@@ -55,6 +55,20 @@ def generate_launch_description():
             parameters=[{
                 'sim_mode': sim_mode,
                 'nav_frame_id': 'odom',
+                # ── 矛头/吸盘指令 ──
+                'spearhead_extend_cmd': 2,   # 伸吸盘指令 (zhuangtai 字段)
+                # ── 里程计微调目标点 (TODO: 实测后填入) ──
+                'fine_tune_target_x': 0.0,
+                'fine_tune_target_y': 0.0,
+                'fine_tune_target_yaw': 0.0,
+                # 微调参数 (bang-bang)
+                'fine_tune_xy_threshold': 0.01,
+                'fine_tune_yaw_threshold': 0.05,
+                'fine_tune_stable_required': 5,
+                'fine_tune_timeout_s': 15.0,
+                'fine_tune_speed_x': 0.05,
+                'fine_tune_speed_y': 0.05,
+                'fine_tune_speed_yaw': 0.2,
                 # 矛头基准点 (2号矛头), 间距200mm
                 'spearhead_base_x': -0.604,
                 'spearhead_base_y': -1.049,
@@ -202,7 +216,7 @@ def generate_launch_description():
             condition=IfCondition(enable_spearhead),
             parameters=[{
                 'camera_index': spearhead_camera_index,
-                'fps': 20.0,
+                'fps': 30.0,
                 'frame_width': 1920,
                 'frame_height': 1080,
                 'start_enabled': False,
@@ -212,15 +226,15 @@ def generate_launch_description():
                 'uvc_pid': 0x6368,
                 'uvc_lib_path': '',  # auto-detect, or set e.g. '/home/epoch/Desktop/libuvc/build/libuvc.so'
                 # gray cylinder ROI (on 1920x1080 frame)
-                # near full-width scan: 100px margin each side
-                'cyl_roi_x': 100,
-                'cyl_roi_y': 0,
-                'cyl_roi_w': 1720,
-                'cyl_roi_h': 1080,
+                # search around expected cylinder position
+                'cyl_roi_x': 600,
+                'cyl_roi_y': 200,
+                'cyl_roi_w': 700,
+                'cyl_roi_h': 700,
                 'cyl_band_width': 110,
                 # template matching
                 'cyl_template_path': _template_path,
-                'cyl_template_threshold': 0.6,
+                'cyl_template_threshold': 0.3,
                 'cyl_expected_width': 110.0,
             }],
         ),

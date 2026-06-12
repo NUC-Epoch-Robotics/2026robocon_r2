@@ -12,6 +12,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 
+#include <nav_msgs/msg/odometry.hpp>
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "robot_serial/msg/juece.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -138,6 +139,7 @@ struct Context
     // ---- config (read-only after init) ----
     std::string nav_frame_id{"odom"};
     uint8_t zone1_arm_command{0};
+    uint8_t spearhead_extend_cmd{2};   // 伸吸盘指令 (zhuangtai 字段)
     std::unordered_map<int, WaypointTask> point_table;
     std::vector<int64_t> zone1_route_ids;
     double dock_r1_x{0}, dock_r1_y{0}, dock_r1_z{0};
@@ -161,24 +163,25 @@ struct Context
     bool spearhead_exists{false};
     bool lightboard_map_received{false};
 
-    // ---- cylinder alignment (visual align) ----
-    float cyl_norm_offset{0.0f};   // [-1,1] normalized x offset in ROI
-    bool cyl_valid{false};          // cylinder detected
-    float cyl_overlap{0.0f};       // overlap ratio with center band
-    float cyl_width{0.0f};         // cylinder bbox width in pixels
+    // ---- odometry mirror (from /odin1/odometry) ----
+    double odom_x{0.0};
+    double odom_y{0.0};
+    double odom_yaw{0.0};
+    bool odom_received{false};
 
-    // ---- visual align parameters (bang-bang) ----
-    double vision_align_offset_threshold{0.05};   // |norm_offset| < this → aligned
-    double vision_align_overlap_threshold{0.95};   // overlap >= this → aligned
-    int vision_align_stable_required{5};           // consecutive aligned frames
-    double vision_align_timeout_s{10.0};  // fine alignment with low speed
-    // fixed speeds for bang-bang (m/s) — chassis min is 0.001
-    double vision_align_speed_x{0.001};             // lateral correction (image left/right → robot x)
-    double vision_align_speed_y_fwd{0.001};         // forward correction (too narrow → robot -y)
-    double vision_align_speed_y_back{0.001};        // backward correction (too wide → robot +y)
-    // expected cylinder width (pixels) at correct distance
-    double vision_align_expected_width{110.0};
-    double vision_align_width_tolerance{10.0};     // |detected - expected| < this → distance ok
+    // ---- odometry fine-tune target point (configurable via ROS params) ----
+    double fine_tune_target_x{0.0};
+    double fine_tune_target_y{0.0};
+    double fine_tune_target_yaw{0.0};
+
+    // ---- odometry fine-tune parameters (bang-bang) ----
+    double fine_tune_xy_threshold{0.01};     // position tolerance (m)
+    double fine_tune_yaw_threshold{0.05};    // yaw tolerance (rad)
+    int fine_tune_stable_required{5};        // consecutive aligned frames
+    double fine_tune_timeout_s{15.0};        // timeout (s)
+    double fine_tune_speed_x{0.05};          // x correction speed (m/s)
+    double fine_tune_speed_y{0.05};          // y correction speed (m/s)
+    double fine_tune_speed_yaw{0.2};         // yaw correction speed (rad/s)
     std::vector<uint8_t> lightboard_map;
     std::vector<uint8_t> latest_lightboard_map;
     bool grab_scene_ready{false};
@@ -204,9 +207,9 @@ struct Context
     int spearhead_post_dock_step{0};
     rclcpp::Time spearhead_post_dock_start{0, 0, RCL_ROS_TIME};
 
-    // ---- visual align state ----
-    int vision_stable_count{0};
-    rclcpp::Time vision_align_start_time{0, 0, RCL_ROS_TIME};
+    // ---- odometry fine-tune state ----
+    int fine_tune_stable_count{0};
+    rclcpp::Time fine_tune_start_time{0, 0, RCL_ROS_TIME};
 
     // ---- zone2 progress ----
     size_t zone2_index{0};
@@ -283,8 +286,8 @@ public:
     // --- low-level publish ---
     void publishCmd(uint8_t status_bit, uint8_t is_finsh = 0, uint8_t zhuangtai = 0);
 
-    // --- cmd_vel (visual align) ---
-    void publishCmdVel(double linear_x, double linear_y);
+    // --- cmd_vel (odometry fine-tune) ---
+    void publishCmdVel(double linear_x, double linear_y, double angular_z = 0.0);
     void stopCmdVel();
 
     // --- called each tick ---
@@ -419,21 +422,23 @@ public:
 private:
     enum class Sub : uint8_t
     {
-        NAV_POINT,
-        NAV_POINT_Y,        // 矛头点第二段: 变y
-        VISION_ALIGN,       // 视觉对齐灰柱 (bang-bang cmd_vel)
-        OPERATE,
+        EXTEND_SUCTION,     // 开局伸吸盘
+        NAV_POINT,          // 第一段: 变x
+        ROTATE_90_CW,       // 顺时针转90度
+        NAV_POINT_Y,        // 第二段: 变y
+        ODOM_FINE_TUNE,     // 里程计微调 (odometry-based cmd_vel)
+        OPERATE,            // 抓矛头
         DOCK,
         SPEARHEAD_POST_DOCK,  // 抓矛头对接后: 横移→旋转
         UP_STAIRS,
         DOWN_STAIRS,
         FINISH,
     };
-    Sub sub_{Sub::NAV_POINT};
+    Sub sub_{Sub::EXTEND_SUCTION};
 
     void enterSub(Context &ctx, ActionDispatcher &act);
     std::unique_ptr<TopState> handleSubEvent(Context &ctx, ActionDispatcher &act, const Event &e);
-    void tickVisionAlign(Context &ctx, ActionDispatcher &act);
+    void tickOdomFineTune(Context &ctx, ActionDispatcher &act);
     void checkDockTransition(Context &ctx, ActionDispatcher &act);
     void checkTimeLimit(Context &ctx, ActionDispatcher &act);
 };
@@ -513,10 +518,7 @@ private:
     void onLightboardMap(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
-    void onCylValid(const std_msgs::msg::Bool::SharedPtr msg);
-    void onCylOffset(const std_msgs::msg::Float32::SharedPtr msg);
-    void onCylOverlap(const std_msgs::msg::Float32::SharedPtr msg);
-    void onCylWidth(const std_msgs::msg::Float32::SharedPtr msg);
+    void onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg);
 
     // ROS2
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_ack_sub_;
@@ -527,10 +529,7 @@ private:
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr button_state_sub_;
-    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr cyl_valid_sub_;
-    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr cyl_offset_sub_;
-    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr cyl_overlap_sub_;
-    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr cyl_width_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
 
     // core
