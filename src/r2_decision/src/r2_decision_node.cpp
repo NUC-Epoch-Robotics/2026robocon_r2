@@ -42,19 +42,10 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
         "r2/control/button_state", 10,
         std::bind(&R2DecisionNode::onButtonState, this, _1));
 
-    // ── cylinder alignment subscriptions ─────────────────────
-    cyl_valid_sub_ = create_subscription<std_msgs::msg::Bool>(
-        "spearhead/cyl_valid", 10,
-        std::bind(&R2DecisionNode::onCylValid, this, _1));
-    cyl_offset_sub_ = create_subscription<std_msgs::msg::Float32>(
-        "spearhead/offset", 10,
-        std::bind(&R2DecisionNode::onCylOffset, this, _1));
-    cyl_overlap_sub_ = create_subscription<std_msgs::msg::Float32>(
-        "spearhead/overlap", 10,
-        std::bind(&R2DecisionNode::onCylOverlap, this, _1));
-    cyl_width_sub_ = create_subscription<std_msgs::msg::Float32>(
-        "spearhead/cyl_width", 10,
-        std::bind(&R2DecisionNode::onCylWidth, this, _1));
+    // ── odometry subscription (for fine-tune) ────────────────
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        "/odin1/odometry", 10,
+        std::bind(&R2DecisionNode::onOdometry, this, _1));
 
     // ── main loop ─────────────────────────────────────────────
     timer_ = create_wall_timer(
@@ -69,6 +60,7 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     ctx_.current_y = declare_parameter<double>("start_y", -0.259);
 
     ctx_.zone1_arm_command = static_cast<uint8_t>(declare_parameter<int>("zone1_arm_command", 0));
+    ctx_.spearhead_extend_cmd = static_cast<uint8_t>(declare_parameter<int>("spearhead_extend_cmd", 2));
 
     double spearhead_base_x = declare_parameter<double>("spearhead_base_x", 0.0);
     double spearhead_base_y = declare_parameter<double>("spearhead_base_y", 0.0);
@@ -134,16 +126,19 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     ctx_.scene_confirm_timeout_s = declare_parameter<double>("scene_confirm_timeout_s", 5.0);
     ctx_.dock_timeout_s = declare_parameter<double>("dock_timeout_s", 15.0);
 
-    // Visual align params (bang-bang)
-    ctx_.vision_align_offset_threshold = declare_parameter<double>("vision_align_offset_threshold", 0.05);
-    ctx_.vision_align_overlap_threshold = declare_parameter<double>("vision_align_overlap_threshold", 0.95);
-    ctx_.vision_align_stable_required = declare_parameter<int>("vision_align_stable_required", 5);
-    ctx_.vision_align_timeout_s = declare_parameter<double>("vision_align_timeout_s", 10.0);
-    ctx_.vision_align_speed_x = declare_parameter<double>("vision_align_speed_x", 0.08);
-    ctx_.vision_align_speed_y_fwd = declare_parameter<double>("vision_align_speed_y_fwd", 0.08);
-    ctx_.vision_align_speed_y_back = declare_parameter<double>("vision_align_speed_y_back", 0.08);
-    ctx_.vision_align_expected_width = declare_parameter<double>("vision_align_expected_width", 120.0);
-    ctx_.vision_align_width_tolerance = declare_parameter<double>("vision_align_width_tolerance", 10.0);
+    // Odometry fine-tune target point (configurable, to be measured)
+    ctx_.fine_tune_target_x = declare_parameter<double>("fine_tune_target_x", 0.0);
+    ctx_.fine_tune_target_y = declare_parameter<double>("fine_tune_target_y", 0.0);
+    ctx_.fine_tune_target_yaw = declare_parameter<double>("fine_tune_target_yaw", 0.0);
+
+    // Odometry fine-tune params (bang-bang)
+    ctx_.fine_tune_xy_threshold = declare_parameter<double>("fine_tune_xy_threshold", 0.01);
+    ctx_.fine_tune_yaw_threshold = declare_parameter<double>("fine_tune_yaw_threshold", 0.05);
+    ctx_.fine_tune_stable_required = declare_parameter<int>("fine_tune_stable_required", 5);
+    ctx_.fine_tune_timeout_s = declare_parameter<double>("fine_tune_timeout_s", 15.0);
+    ctx_.fine_tune_speed_x = declare_parameter<double>("fine_tune_speed_x", 0.05);
+    ctx_.fine_tune_speed_y = declare_parameter<double>("fine_tune_speed_y", 0.05);
+    ctx_.fine_tune_speed_yaw = declare_parameter<double>("fine_tune_speed_yaw", 0.2);
 
     // MF exit
     ctx_.mf_exit_x = declare_parameter<double>("mf_exit_x", 3.2);

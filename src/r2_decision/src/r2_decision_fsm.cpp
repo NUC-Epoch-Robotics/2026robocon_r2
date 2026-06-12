@@ -152,12 +152,16 @@ const char *Zone1State::name() const
 {
     switch (sub_)
     {
+    case Sub::EXTEND_SUCTION:
+        return "Zone1/ExtendSuction";
     case Sub::NAV_POINT:
         return "Zone1/NavPoint";
+    case Sub::ROTATE_90_CW:
+        return "Zone1/Rotate90CW";
     case Sub::NAV_POINT_Y:
         return "Zone1/NavPointY";
-    case Sub::VISION_ALIGN:
-        return "Zone1/VisionAlign";
+    case Sub::ODOM_FINE_TUNE:
+        return "Zone1/OdomFineTune";
     case Sub::OPERATE:
         return "Zone1/Operate";
     case Sub::DOCK:
@@ -177,7 +181,7 @@ const char *Zone1State::name() const
 // 进入 Zone1
 std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &act)
 {
-    sub_ = Sub::NAV_POINT;
+    sub_ = Sub::EXTEND_SUCTION;
     enterSub(ctx, act);
     return nullptr;
 }
@@ -188,8 +192,8 @@ std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &ac
 //   3. FINISH 子状态: 构建 Zone2 任务列表, 切换到 Zone2
 std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act)
 {
-    if (sub_ == Sub::VISION_ALIGN)
-        tickVisionAlign(ctx, act);
+    if (sub_ == Sub::ODOM_FINE_TUNE)
+        tickOdomFineTune(ctx, act);
 
     if (sub_ == Sub::DOCK)
         checkDockTransition(ctx, act); // 等导航到对接站后, 监控 spearhead
@@ -228,7 +232,7 @@ std::unique_ptr<TopState> Zone1State::handleEvent(Context &ctx, ActionDispatcher
         ctx.zone1_arm_retry = 0;
         ctx.zone1_start_time = rclcpp::Clock().now();
         act.enableSpear(true);
-        sub_ = Sub::NAV_POINT;
+        sub_ = Sub::EXTEND_SUCTION;
         enterSub(ctx, act);
         return nullptr;
     }
@@ -261,6 +265,12 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
 {
     switch (sub_)
     {
+    case Sub::EXTEND_SUCTION:
+    {
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: EXTEND_SUCTION cmd=%d", ctx.spearhead_extend_cmd);
+        act.sendSpearheadCommand(ctx.spearhead_extend_cmd);
+        break;
+    }
     case Sub::NAV_POINT:
     {
         // 所有矛头点都走完了?
@@ -288,6 +298,16 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         }
         break;
     }
+    case Sub::ROTATE_90_CW:
+    {
+        // 在当前位置顺时针转90度 (yaw = -π/2 → qz=-0.707, qw=0.707)
+        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
+        auto it = ctx.point_table.find(pid);
+        const double target_z = (it != ctx.point_table.end()) ? it->second.z : 0.0;
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
+        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, target_z, 0, 0, -0.707, 0.707, ctx);
+        break;
+    }
     case Sub::NAV_POINT_Y:
     {
         // 第二段: 变y到矛头点, x已经在上一步到位了
@@ -298,12 +318,13 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, 0, 1, ctx);
         break;
     }
-    case Sub::VISION_ALIGN:
+    case Sub::ODOM_FINE_TUNE:
     {
-        ctx.vision_stable_count = 0;
-        ctx.vision_align_start_time = rclcpp::Clock().now();
-        act.enableSpear(true);
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: VISION_ALIGN start");
+        ctx.fine_tune_stable_count = 0;
+        ctx.fine_tune_start_time = rclcpp::Clock().now();
+        act.enableSpear(true);  // 提前开矛头摄像头, 供后续 DOCK 阶段检测对接
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ODOM_FINE_TUNE target=(%.3f,%.3f,%.3f)",
+                    ctx.fine_tune_target_x, ctx.fine_tune_target_y, ctx.fine_tune_target_yaw);
         break;
     }
     case Sub::OPERATE:
@@ -398,8 +419,19 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
 {
     switch (sub_)
     {
+    case Sub::EXTEND_SUCTION:
+        // 伸吸盘完成 → 走第一段x
+        if (e.type == EventType::ARM_DONE)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Extend suction failed, continue anyway");
+            sub_ = Sub::NAV_POINT;
+            enterSub(ctx, act);
+        }
+        break;
+
     case Sub::NAV_POINT:
-        // 第一段x完成 → 走第二段y
+        // 第一段x完成 → 顺时针转90度
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
@@ -410,14 +442,25 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
             }
             else
             {
-                sub_ = Sub::NAV_POINT_Y;
+                sub_ = Sub::ROTATE_90_CW;
             }
             enterSub(ctx, act);
         }
         break;
 
+    case Sub::ROTATE_90_CW:
+        // 旋转完成 → 走第二段y
+        if (e.type == EventType::NAV_DONE)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: rotate failed, continue anyway");
+            sub_ = Sub::NAV_POINT_Y;
+            enterSub(ctx, act);
+        }
+        break;
+
     case Sub::NAV_POINT_Y:
-        // 第二段y完成 → VISION_ALIGN (spearhead点) 或 OPERATE (普通点)
+        // 第二段y完成 → ODOM_FINE_TUNE (spearhead点) 或 OPERATE (普通点)
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
@@ -431,20 +474,20 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
                 const int pid = ctx.zone1_route_ids[ctx.zone1_index];
                 auto it = ctx.point_table.find(pid);
                 bool use_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
-                sub_ = use_spearhead ? Sub::VISION_ALIGN : Sub::OPERATE;
+                sub_ = use_spearhead ? Sub::ODOM_FINE_TUNE : Sub::OPERATE;
             }
             enterSub(ctx, act);
         }
         break;
 
-    case Sub::VISION_ALIGN:
+    case Sub::ODOM_FINE_TUNE:
         if (e.type == EventType::VISION_ALIGN_DONE)
         {
             act.stopCmdVel();
             if (!e.success)
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Vision align timeout/failed, degrade to OPERATE");
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Odom fine-tune timeout/failed, degrade to OPERATE");
             else
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Vision align OK");
+                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Odom fine-tune OK");
             sub_ = Sub::OPERATE;
             enterSub(ctx, act);
         }
@@ -613,70 +656,81 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
 }
 
 /*
- * tickVisionAlign — bang-bang 视觉对齐
- *   画面左/右 → robot x (前/后)
- *   灰柱太窄(远)/太宽(近) → robot y (左/右)
- *   对齐条件: |offset| < threshold AND |width - expected| < tolerance 持续 N 帧
+ * tickOdomFineTune — 基于里程计的微调 (bang-bang)
+ *   对比当前 odom 位姿与目标位姿 (target_x, target_y, target_yaw)
+ *   x/y 误差 → cmd_vel linear.x / linear.y
+ *   yaw 误差 → cmd_vel angular.z
+ *   对齐条件: |dx| < xy_threshold AND |dy| < xy_threshold AND |dyaw| < yaw_threshold 持续 N 帧
  */
-void Zone1State::tickVisionAlign(Context &ctx, ActionDispatcher &act)
+void Zone1State::tickOdomFineTune(Context &ctx, ActionDispatcher &act)
 {
     // ── timeout check ──
-    auto elapsed = (rclcpp::Clock().now() - ctx.vision_align_start_time).seconds();
-    if (elapsed > ctx.vision_align_timeout_s)
+    auto elapsed = (rclcpp::Clock().now() - ctx.fine_tune_start_time).seconds();
+    if (elapsed > ctx.fine_tune_timeout_s)
     {
-        RCLCPP_WARN(rclcpp::get_logger("fsm"), "Vision align timeout (%.1fs)", elapsed);
+        RCLCPP_WARN(rclcpp::get_logger("fsm"), "Odom fine-tune timeout (%.1fs)", elapsed);
         act.postEvent({EventType::VISION_ALIGN_DONE, false});
         return;
     }
 
-    // ── lost target → stop, reset ──
-    if (!ctx.cyl_valid)
+    // ── no odometry yet → wait ──
+    if (!ctx.odom_received)
     {
         act.stopCmdVel();
-        ctx.vision_stable_count = 0;
+        ctx.fine_tune_stable_count = 0;
         return;
     }
 
+    // ── compute errors ──
+    double dx = ctx.fine_tune_target_x - ctx.odom_x;
+    double dy = ctx.fine_tune_target_y - ctx.odom_y;
+    double dyaw = ctx.fine_tune_target_yaw - ctx.odom_yaw;
+    // normalize yaw to [-pi, pi]
+    while (dyaw > M_PI)  dyaw -= 2.0 * M_PI;
+    while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
+
     // ── bang-bang: compute fixed speeds ──
-    double vx = 0.0;  // robot x (image left/right)
-    double vy = 0.0;  // robot y (image depth)
+    double vx = 0.0;
+    double vy = 0.0;
+    double vyaw = 0.0;
 
-    // lateral: image left/right → robot x
-    if (ctx.cyl_norm_offset < -ctx.vision_align_offset_threshold)
-        vx = -ctx.vision_align_speed_x;   // image left → robot -x
-    else if (ctx.cyl_norm_offset > ctx.vision_align_offset_threshold)
-        vx = ctx.vision_align_speed_x;    // image right → robot +x
+    if (dx > ctx.fine_tune_xy_threshold)
+        vx = ctx.fine_tune_speed_x;
+    else if (dx < -ctx.fine_tune_xy_threshold)
+        vx = -ctx.fine_tune_speed_x;
 
-    // depth: cylinder width → robot y
-    double width_error = ctx.cyl_width - ctx.vision_align_expected_width;
-    if (width_error < -ctx.vision_align_width_tolerance)
-        vy = -ctx.vision_align_speed_y_fwd;   // too narrow (far) → robot -y
-    else if (width_error > ctx.vision_align_width_tolerance)
-        vy = ctx.vision_align_speed_y_back;   // too wide (close) → robot +y
+    if (dy > ctx.fine_tune_xy_threshold)
+        vy = ctx.fine_tune_speed_y;
+    else if (dy < -ctx.fine_tune_xy_threshold)
+        vy = -ctx.fine_tune_speed_y;
+
+    if (dyaw > ctx.fine_tune_yaw_threshold)
+        vyaw = ctx.fine_tune_speed_yaw;
+    else if (dyaw < -ctx.fine_tune_yaw_threshold)
+        vyaw = -ctx.fine_tune_speed_yaw;
 
     // ── send velocity ──
-    act.publishCmdVel(vx, vy);
+    act.publishCmdVel(vx, vy, vyaw);
 
-    // ── check alignment: offset ok AND distance ok ──
-    bool offset_ok = std::abs(ctx.cyl_norm_offset) <= ctx.vision_align_offset_threshold;
-    bool width_ok = std::abs(width_error) <= ctx.vision_align_width_tolerance;
-    bool overlap_ok = ctx.cyl_overlap >= ctx.vision_align_overlap_threshold;
+    // ── check alignment ──
+    bool x_ok = std::abs(dx) <= ctx.fine_tune_xy_threshold;
+    bool y_ok = std::abs(dy) <= ctx.fine_tune_xy_threshold;
+    bool yaw_ok = std::abs(dyaw) <= ctx.fine_tune_yaw_threshold;
 
-    if ((offset_ok || overlap_ok) && width_ok)
+    if (x_ok && y_ok && yaw_ok)
     {
-        ++ctx.vision_stable_count;
-        if (ctx.vision_stable_count >= ctx.vision_align_stable_required)
+        ++ctx.fine_tune_stable_count;
+        if (ctx.fine_tune_stable_count >= ctx.fine_tune_stable_required)
         {
             RCLCPP_INFO(rclcpp::get_logger("fsm"),
-                        "Vision align DONE: offset=%.3f overlap=%.2f width=%.0f (%d frames)",
-                        ctx.cyl_norm_offset, ctx.cyl_overlap, ctx.cyl_width,
-                        ctx.vision_stable_count);
+                        "Odom fine-tune DONE: dx=%.3f dy=%.3f dyaw=%.3f (%d frames)",
+                        dx, dy, dyaw, ctx.fine_tune_stable_count);
             act.postEvent({EventType::VISION_ALIGN_DONE, true});
         }
     }
     else
     {
-        ctx.vision_stable_count = 0;
+        ctx.fine_tune_stable_count = 0;
     }
 }
 
@@ -721,7 +775,7 @@ void Zone1State::checkDockTransition(Context &ctx, ActionDispatcher &act)
 void Zone1State::checkTimeLimit(Context &ctx, ActionDispatcher &act)
 {
     if (sub_ == Sub::UP_STAIRS || sub_ == Sub::DOWN_STAIRS || sub_ == Sub::FINISH ||
-        sub_ == Sub::SPEARHEAD_POST_DOCK)
+        sub_ == Sub::SPEARHEAD_POST_DOCK || sub_ == Sub::EXTEND_SUCTION)
         return; // 已经在离开步骤了, 不打断
 
     auto elapsed = (rclcpp::Clock().now() - ctx.zone1_start_time).seconds();
