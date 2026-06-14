@@ -913,20 +913,8 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
                     sub_ = Sub::ROTATE_GRAB;
                 else
                     sub_ = Sub::WAIT_SCENE;
+                enterSub(ctx, act);
             }
-            enterSub(ctx, act);
-        }
-        break;
-
-    case Sub::ROTATE:
-        // 旋转完 → 下一个点 (台阶已在旋转之前做完了)
-        if (e.type == EventType::NAV_DONE)
-        {
-            if (!e.success)
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2: rotate nav failed");
-            ++ctx.zone2_index;
-            sub_ = Sub::NAV_POINT;
-            enterSub(ctx, act);
         }
         break;
 
