@@ -12,12 +12,16 @@
  *                            │         └── 固定路线 FINISH → Done
  *                            │            动态路线 FINISH → Exit → Done
  *                            │
- *                            └── 超时 → UP_STAIRS → DOWN_STAIRS → Zone2
+ *                            └── 超时 → FINISH → Zone2
+ *
+ *   Zone1 新流程 (2024):
+ *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转) → NAV_POINT_Y(走Y)
+ *     → OPERATE(抓) → ROTATE_180(转180°) → MOVE_Y_PLUS_50(y+0.5) → WAIT_5S(等5s) → FINISH → Zone2
  *
  *   每个大状态内部用 sub_ 枚举做子状态切换:
  *     enterSub()  = 进入子状态时执行动作 (发导航、发机械臂指令、启台阶)
  *     handleSubEvent() = 事件来了判断能不能转下一个子状态
- *     onTick()    = 每 20ms 检查超时、推进不需要等事件的步骤
+ *     onTick()    = 每 20ms 检查旋转进度、等5s超时、全局超时
  *
  *   事件驱动模式:
  *     ROS回调 → 更新 Context + postEvent() → event_queue → handleEvent() → handleSubEvent()
@@ -128,23 +132,22 @@ std::unique_ptr<TopState> WaitStartState::handleEvent(Context &ctx, ActionDispat
 
 /*
  * ============================================================================
- * Zone1State — 一区: 6 个矛头点 + 对接站流程
+ * Zone1State — 一区: 矛头抓取 + 撤离流程
  * ============================================================================
  *
- *   子状态流转 (固定路线):
- *     NAV_POINT ─→ OPERATE ─→ DOCK ─→ NAV_POINT (下一个矛头点)
- *                    ↑                    │
- *                    └── 跳过对接 ←───────┘
- *                                         所有点完成
- *                                            ↓
- *     FINISH ─→ Zone2                     UP_STAIRS ─→ DOWN_STAIRS ─→ Zone2
+ *   子状态流转:
+ *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转90°)
+ *     → NAV_POINT_Y(走Y) → OPERATE(抓) → ROTATE_180(转180°)
+ *     → MOVE_Y_PLUS_50(y+0.5) → WAIT_5S(等5s) → FINISH → Zone2
  *
- *   NAV_POINT:  导航到矛头点坐标
- *   OPERATE:    发机械臂指令打矛头 (arm_command)
- *   DOCK:       导航到对接站, 等 spearhead 消失 = 对接成功
- *   UP_STAIRS:  上台阶 (耗时步骤, 脱离一区)
- *   DOWN_STAIRS: 下台阶
- *   FINISH:     固定路线直接结束, 动态路线走上/下台阶
+ *   NAV_POINT:    导航到矛头点x坐标 (y保持, 全局坐标系)
+ *   ROTATE_90_CW: cmd_vel原地顺时针转90°, odom校验到位
+ *   NAV_POINT_Y:  导航到矛头点y坐标 (x已到位, 全局坐标系)
+ *   OPERATE:      发机械臂指令抓矛头 (spearhead / arm_command)
+ *   ROTATE_180:   cmd_vel原地转180°, odom校验到位
+ *   MOVE_Y_PLUS_50: 导航到当前y+0.5m (全局坐标系)
+ *   WAIT_5S:      原地等待5秒
+ *   FINISH:       构建Zone2任务, 切换到Zone2
  * ============================================================================
  */
 
@@ -152,28 +155,15 @@ const char *Zone1State::name() const
 {
     switch (sub_)
     {
-    case Sub::EXTEND_SUCTION:
-        return "Zone1/ExtendSuction";
-    case Sub::NAV_POINT:
-        return "Zone1/NavPoint";
-    case Sub::ROTATE_90_CW:
-        return "Zone1/Rotate90CW";
-    case Sub::NAV_POINT_Y:
-        return "Zone1/NavPointY";
-    case Sub::ODOM_FINE_TUNE:
-        return "Zone1/OdomFineTune";
-    case Sub::OPERATE:
-        return "Zone1/Operate";
-    case Sub::DOCK:
-        return "Zone1/Dock";
-    case Sub::SPEARHEAD_POST_DOCK:
-        return "Zone1/SpearheadPostDock";
-    case Sub::UP_STAIRS:
-        return "Zone1/UpStairs";
-    case Sub::DOWN_STAIRS:
-        return "Zone1/DownStairs";
-    case Sub::FINISH:
-        return "Zone1/Finish";
+    case Sub::EXTEND_SUCTION: return "Zone1/ExtendSuction";
+    case Sub::NAV_POINT:      return "Zone1/NavPoint";
+    case Sub::ROTATE_90_CW:   return "Zone1/Rotate90CW";
+    case Sub::NAV_POINT_Y:    return "Zone1/NavPointY";
+    case Sub::OPERATE:        return "Zone1/Operate";
+    case Sub::ROTATE_180:     return "Zone1/Rotate180";
+    case Sub::MOVE_Y_PLUS_50: return "Zone1/MoveYPlus50";
+    case Sub::WAIT_5S:        return "Zone1/Wait5s";
+    case Sub::FINISH:         return "Zone1/Finish";
     }
     return "Zone1";
 }
@@ -187,22 +177,32 @@ std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &ac
 }
 
 // Zone1 每 20ms 的检查:
-//   1. DOCK 子状态: 监控 spearhead 是否消失 (对接成功)
-//   2. 全局超时检查: Zone1 超过 zone1_max_time_s 就强制结束
-//   3. FINISH 子状态: 构建 Zone2 任务列表, 切换到 Zone2
+//   1. 旋转子状态: odom + cmd_vel 驱动原地旋转
+//   2. WAIT_5S: 计时5秒
+//   3. 全局超时检查
+//   4. FINISH: 构建 Zone2 任务列表, 切换到 Zone2
 std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act)
 {
-    if (sub_ == Sub::ODOM_FINE_TUNE)
-        tickOdomFineTune(ctx, act);
+    // 旋转状态: cmd_vel + odom 驱动, 不依赖 Nav2
+    if (sub_ == Sub::ROTATE_90_CW || sub_ == Sub::ROTATE_180)
+        tickRotation(ctx, act);
 
-    if (sub_ == Sub::DOCK)
-        checkDockTransition(ctx, act); // 等导航到对接站后, 监控 spearhead
+    checkTimeLimit(ctx, act);
 
-    checkTimeLimit(ctx, act); // 全局 120s 超时
+    // WAIT_5S: 计时5秒后推进
+    if (sub_ == Sub::WAIT_5S)
+    {
+        auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
+        if (elapsed > 5.0)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S done");
+            sub_ = Sub::FINISH;
+            enterSub(ctx, act);
+        }
+    }
 
     if (sub_ == Sub::FINISH)
     {
-        // 决策树: 根据固定/动态路线构建 Zone2 任务列表
         if (ctx.use_fixed_zone2_route)
             R2DecisionNode::buildZone2FixedRoute(ctx);
         else
@@ -238,11 +238,11 @@ std::unique_ptr<TopState> Zone1State::handleEvent(Context &ctx, ActionDispatcher
     }
     if (e.type == EventType::ZONE1_TIMEOUT)
     {
-        // 超时: 关传感器, 直接上台阶离开一区
+        // 超时: 关传感器, 直接结束一区进二区
         act.enableSpear(false);
         act.enableLightboard(false);
-        act.stopStair();
-        sub_ = Sub::UP_STAIRS;
+        act.stopCmdVel();
+        sub_ = Sub::FINISH;
         enterSub(ctx, act);
         return nullptr;
     }
@@ -253,6 +253,7 @@ void Zone1State::onExit(Context &ctx, ActionDispatcher &act)
 {
     (void)ctx;
     act.stopCmdVel();
+    act.stopStair();
     act.enableSpear(false);
     act.enableLightboard(false);
 }
@@ -276,11 +277,10 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         // 所有矛头点都走完了?
         if (ctx.zone1_index >= ctx.zone1_route_ids.size())
         {
-            sub_ = ctx.use_fixed_zone2_route ? Sub::FINISH : Sub::UP_STAIRS;
+            sub_ = Sub::FINISH;
             enterSub(ctx, act);
             return;
         }
-        // 从 point_table 取当前点的坐标
         const int pid = ctx.zone1_route_ids[ctx.zone1_index];
         auto it = ctx.point_table.find(pid);
         if (it == ctx.point_table.end())
@@ -292,7 +292,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         }
         {
             const auto &t = it->second;
-            // 第一段: 只变x, y保持当前位置
+            // 第一段: 只变x (全局坐标系), y保持当前位置
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d x=%.2f (y stays %.2f)", t.id, t.x, ctx.current_y);
             act.sendNavigateWithQuat(t.x, ctx.current_y, t.z, 0, 0, 0, 1, ctx);
         }
@@ -300,31 +300,25 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_90_CW:
     {
-        // 在当前位置顺时针转90度 (yaw = -π/2 → qz=-0.707, qw=0.707)
-        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-        auto it = ctx.point_table.find(pid);
-        const double target_z = (it != ctx.point_table.end()) ? it->second.z : 0.0;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
-        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, target_z, 0, 0, -0.707, 0.707, ctx);
+        // cmd_vel 原地顺时针转90度, odom 校验到位
+        ctx.rotation_target_yaw = ctx.odom_yaw - M_PI_2;
+        // normalize to [-pi, pi]
+        while (ctx.rotation_target_yaw > M_PI)  ctx.rotation_target_yaw -= 2.0 * M_PI;
+        while (ctx.rotation_target_yaw < -M_PI) ctx.rotation_target_yaw += 2.0 * M_PI;
+        ctx.rotation_stable_count = 0;
+        ctx.rotation_start_time = rclcpp::Clock().now();
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW target_yaw=%.3f (current=%.3f)",
+                    ctx.rotation_target_yaw, ctx.odom_yaw);
         break;
     }
     case Sub::NAV_POINT_Y:
     {
-        // 第二段: 变y到矛头点, x已经在上一步到位了
+        // 第二段: 变y到矛头点 (全局坐标系), x已经在上一步到位了
         const int pid = ctx.zone1_route_ids[ctx.zone1_index];
         auto it = ctx.point_table.find(pid);
         const auto &t = it->second;
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d y=%.2f (x=%.2f)", t.id, t.y, t.x);
         act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, 0, 1, ctx);
-        break;
-    }
-    case Sub::ODOM_FINE_TUNE:
-    {
-        ctx.fine_tune_stable_count = 0;
-        ctx.fine_tune_start_time = rclcpp::Clock().now();
-        act.enableSpear(true);  // 提前开矛头摄像头, 供后续 DOCK 阶段检测对接
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ODOM_FINE_TUNE target=(%.3f,%.3f,%.3f)",
-                    ctx.fine_tune_target_x, ctx.fine_tune_target_y, ctx.fine_tune_target_yaw);
         break;
     }
     case Sub::OPERATE:
@@ -339,7 +333,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         {
             ctx.zone1_arm_retry = 0;
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1 point %d: spearhead grab START", pid);
-            act.sendSpearheadCommand(1); // zhuangtai=1 → 开始抓矛头等对接
+            act.sendSpearheadCommand(1);
             break;
         }
 
@@ -366,43 +360,33 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         act.sendArmCommand(t.arm_command);
         break;
     }
-    case Sub::DOCK:
+    case Sub::ROTATE_180:
     {
-        // 打完矛头 → 以当前点为基准 y+0.5, 然后准备转 90° 再等对接完成
-        ctx.dock_arrived = false;
-        ctx.dock_step = 0;
-        act.enableLightboard(true); // 开灯板摄像头, 记录灯板数据
-        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-        auto it = ctx.point_table.find(pid);
-        const double target_z = (it != ctx.point_table.end()) ? it->second.z : 0.0;
-        const double target_x = ctx.current_x;
-        const double target_y = ctx.current_y + 0.5;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav to dock (%.2f, %.2f)",
-                    target_x, target_y);
-        act.sendNavigateWithQuat(target_x, target_y, target_z, 0, 0, 0, 1, ctx);
+        // cmd_vel 原地转180度, 任意方向 (选+cw: +π)
+        double cyaw = ctx.odom_yaw;
+        ctx.rotation_target_yaw = cyaw + M_PI;
+        // normalize to [-pi, pi]
+        while (ctx.rotation_target_yaw > M_PI)  ctx.rotation_target_yaw -= 2.0 * M_PI;
+        while (ctx.rotation_target_yaw < -M_PI) ctx.rotation_target_yaw += 2.0 * M_PI;
+        ctx.rotation_stable_count = 0;
+        ctx.rotation_start_time = rclcpp::Clock().now();
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_180 target_yaw=%.3f (current=%.3f)",
+                    ctx.rotation_target_yaw, cyaw);
         break;
     }
-    case Sub::SPEARHEAD_POST_DOCK:
+    case Sub::MOVE_Y_PLUS_50:
     {
-        // 对接完成后保持不动
-        ctx.spearhead_post_dock_step = 0;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Spearhead post-dock: holding position");
+        // y + 0.5m (全局坐标系)
+        double ty = ctx.current_y + 0.5;
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: MOVE_Y_PLUS_50 to y=%.2f (x=%.2f)", ty, ctx.current_x);
+        act.sendNavigateWithQuat(ctx.current_x, ty, 0, 0, 0, 0, 1, ctx);
         break;
     }
-    case Sub::UP_STAIRS:
+    case Sub::WAIT_5S:
     {
-        // 上台阶 → 持续发 stair_cmd=1
-        act.enableSpear(false);
-        act.enableLightboard(false);
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: UP_STAIRS");
-        act.startStair(1, ctx);
-        break;
-    }
-    case Sub::DOWN_STAIRS:
-    {
-        // 下台阶 → 持续发 stair_cmd=2
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOWN_STAIRS");
-        act.startStair(2, ctx);
+        ctx.wait_5s_start_time = rclcpp::Clock().now();
+        act.stopCmdVel();
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S");
         break;
     }
     case Sub::FINISH:
@@ -431,7 +415,7 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::NAV_POINT:
-        // 第一段x完成 → 顺时针转90度
+        // 第一段x完成 → 顺时针转90度 (odom + cmd_vel)
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
@@ -449,18 +433,11 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::ROTATE_90_CW:
-        // 旋转完成 → 走第二段y
-        if (e.type == EventType::NAV_DONE)
-        {
-            if (!e.success)
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: rotate failed, continue anyway");
-            sub_ = Sub::NAV_POINT_Y;
-            enterSub(ctx, act);
-        }
+        // 旋转由 onTick → tickRotation 驱动, 完成后直接切 NAV_POINT_Y
         break;
 
     case Sub::NAV_POINT_Y:
-        // 第二段y完成 → ODOM_FINE_TUNE (spearhead点) 或 OPERATE (普通点)
+        // 第二段y完成 → 抓矛头
         if (e.type == EventType::NAV_DONE)
         {
             if (!e.success)
@@ -471,38 +448,21 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
             }
             else
             {
-                const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-                auto it = ctx.point_table.find(pid);
-                bool use_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
-                sub_ = use_spearhead ? Sub::ODOM_FINE_TUNE : Sub::OPERATE;
+                sub_ = Sub::OPERATE;
             }
             enterSub(ctx, act);
         }
         break;
 
-    case Sub::ODOM_FINE_TUNE:
-        if (e.type == EventType::VISION_ALIGN_DONE)
-        {
-            act.stopCmdVel();
-            if (!e.success)
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Odom fine-tune timeout/failed, degrade to OPERATE");
-            else
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Odom fine-tune OK");
-            sub_ = Sub::OPERATE;
-            enterSub(ctx, act);
-        }
-        break;
-
     case Sub::OPERATE:
-        // 机械臂动作完成 (抓矛头 DONE 也走这里, 事件类型同为 ARM_DONE)
+        // 抓矛头完成 → 转180度
         if (e.type == EventType::ARM_DONE)
         {
             const int pid = ctx.zone1_route_ids[ctx.zone1_index];
             auto it = ctx.point_table.find(pid);
-            const bool skip_dock = (it != ctx.point_table.end()) && it->second.skip_dock;
             const bool use_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
 
-            // 失败且还有重试次数 → 重发指令 (区分 arm/spearhead)
+            // 失败且还有重试次数 → 重发
             if (!e.success && ctx.zone1_arm_retry < kZone1ArmMaxRetry)
             {
                 ++ctx.zone1_arm_retry;
@@ -519,134 +479,31 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
                             use_spearhead ? "spearhead" : "arm");
 
             ctx.zone1_arm_retry = 0;
-            // skip_dock 的点 (纯导航点) 直接下一个, 否则去对接站
-            if (skip_dock)
-            {
-                ++ctx.zone1_index;
-                sub_ = Sub::NAV_POINT;
-            }
-            else
-            {
-                sub_ = Sub::DOCK;
-            }
+            ++ctx.zone1_index;
+
+            // 抓好 → 转180度
+            sub_ = Sub::ROTATE_180;
             enterSub(ctx, act);
         }
         break;
 
-    case Sub::DOCK:
-        // 到达对接点后先旋转 90° 再进入等待
+    case Sub::ROTATE_180:
+        // 旋转由 onTick → tickRotation 驱动, 完成后直接切 MOVE_Y_PLUS_50
+        break;
+
+    case Sub::MOVE_Y_PLUS_50:
+        // y+0.5 导航完成 → 等5秒
         if (e.type == EventType::NAV_DONE)
         {
-            if (ctx.dock_step == 0)
-            {
-                if (!e.success)
-                    RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock move failed, still rotate");
-                ctx.dock_step = 1;
-                const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-                auto it = ctx.point_table.find(pid);
-                const double target_z = (it != ctx.point_table.end()) ? it->second.z : 0.0;
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Dock: rotate 90 CCW");
-                act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, target_z, 0, 0, 0.707, 0.707, ctx);
-            }
-            else if (ctx.dock_step == 1)
-            {
-                if (!e.success)
-                    RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock rotate failed, still wait");
-                ctx.dock_step = 2;
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Dock: rotate done, waiting for dock");
-            }
-            break;
-        }
-        // 对接成功: spearhead 消失
-        if (e.type == EventType::DOCK_SUCCESS)
-        {
-            ++ctx.dock_success_count;
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), ">>> DOCK SUCCESS #%d <<<", ctx.dock_success_count);
-
-            // 保存灯板数据 (给动态路线用)
-            if (ctx.lightboard_map_received)
-            {
-                ctx.latest_lightboard_map = ctx.lightboard_map;
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Lightboard map captured: %zu values",
-                            ctx.latest_lightboard_map.size());
-            }
-
-            // 检查当前点是否抓矛头 → 进入对接后流程 (发2→等5s→发0)
-            const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-            auto it = ctx.point_table.find(pid);
-            bool is_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
-
-            // 对接次数 < 3 且还有下一个点 → 继续; 否则离开
-            bool keep_going = (ctx.dock_success_count < kMaxDocks) &&
-                              (ctx.zone1_index + 1 < ctx.zone1_route_ids.size());
-            if (keep_going)
-            {
-                ++ctx.zone1_index;
-                sub_ = Sub::NAV_POINT;
-            }
-            else if (is_spearhead)
-            {
-                // 抓矛头对接完成 → 发2→等5s→发0 → 然后再上台阶
-                sub_ = Sub::SPEARHEAD_POST_DOCK;
-            }
-            else
-            {
-                sub_ = Sub::UP_STAIRS;
-            }
-            enterSub(ctx, act);
-        }
-        // 对接超时
-        else if (e.type == EventType::DOCK_TIMEOUT)
-        {
-            // 抓矛头点: 没检测到消失也走 SPEARHEAD_POST_DOCK (等5s→发0)
-            const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-            auto it = ctx.point_table.find(pid);
-            bool is_spearhead = (it != ctx.point_table.end()) && it->second.use_spearhead;
-
-            if (is_spearhead)
-            {
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock timeout on spearhead point, still do post-dock");
-                sub_ = Sub::SPEARHEAD_POST_DOCK;
-            }
-            else
-            {
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Dock timeout, skip");
-                ++ctx.zone1_index;
-                sub_ = Sub::NAV_POINT;
-            }
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: move y+50 failed, continue anyway");
+            sub_ = Sub::WAIT_5S;
             enterSub(ctx, act);
         }
         break;
 
-    case Sub::SPEARHEAD_POST_DOCK:
-        break;
-
-    case Sub::UP_STAIRS:
-        // 上台阶完成 → 下台阶
-        if (e.type == EventType::DOWN_JUECE_DONE)
-        {
-            sub_ = Sub::DOWN_STAIRS;
-            enterSub(ctx, act);
-        }
-        break;
-
-    case Sub::DOWN_STAIRS:
-        // 下台阶完成 → 构建 Zone2 任务, 切换到 Zone2
-        if (e.type == EventType::DOWN_JUECE_DONE)
-        {
-            act.stopStair();
-            if (ctx.use_fixed_zone2_route)
-                R2DecisionNode::buildZone2FixedRoute(ctx);
-            else
-                R2DecisionNode::buildZone2Route(ctx, ctx.latest_lightboard_map);
-
-            if (ctx.zone2_tasks.empty())
-            {
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2: no tasks, mission done");
-                return std::make_unique<DoneState>();
-            }
-            return std::make_unique<Zone2State>();
-        }
+    case Sub::WAIT_5S:
+        // WAIT_5S 由 onTick 计时驱动, 不需要处理事件
         break;
 
     case Sub::FINISH:
@@ -656,20 +513,24 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
 }
 
 /*
- * tickOdomFineTune — 基于里程计的微调 (bang-bang)
- *   对比当前 odom 位姿与目标位姿 (target_x, target_y, target_yaw)
- *   x/y 误差 → cmd_vel linear.x / linear.y
- *   yaw 误差 → cmd_vel angular.z
- *   对齐条件: |dx| < xy_threshold AND |dy| < xy_threshold AND |dyaw| < yaw_threshold 持续 N 帧
+ * tickRotation — cmd_vel + odom 原地旋转 (用于 ROTATE_90_CW 和 ROTATE_180)
+ *   bang-bang yaw 控制: |dyaw| > yaw_threshold → 恒定 angular.z
+ *   完成条件: |dyaw| <= yaw_threshold 持续 N 帧
+ *   超时: 15s (降级继续, 不阻塞流程)
  */
-void Zone1State::tickOdomFineTune(Context &ctx, ActionDispatcher &act)
+void Zone1State::tickRotation(Context &ctx, ActionDispatcher &act)
 {
-    // ── timeout check ──
-    auto elapsed = (rclcpp::Clock().now() - ctx.fine_tune_start_time).seconds();
-    if (elapsed > ctx.fine_tune_timeout_s)
+    // ── timeout ──
+    auto elapsed = (rclcpp::Clock().now() - ctx.rotation_start_time).seconds();
+    if (elapsed > 15.0)
     {
-        RCLCPP_WARN(rclcpp::get_logger("fsm"), "Odom fine-tune timeout (%.1fs)", elapsed);
-        act.postEvent({EventType::VISION_ALIGN_DONE, false});
+        RCLCPP_WARN(rclcpp::get_logger("fsm"), "Rotation timeout (%.1fs), continue anyway", elapsed);
+        act.stopCmdVel();
+        if (sub_ == Sub::ROTATE_90_CW)
+            sub_ = Sub::NAV_POINT_Y;
+        else
+            sub_ = Sub::MOVE_Y_PLUS_50;
+        enterSub(ctx, act);
         return;
     }
 
@@ -677,106 +538,52 @@ void Zone1State::tickOdomFineTune(Context &ctx, ActionDispatcher &act)
     if (!ctx.odom_received)
     {
         act.stopCmdVel();
-        ctx.fine_tune_stable_count = 0;
+        ctx.rotation_stable_count = 0;
         return;
     }
 
-    // ── compute errors ──
-    double dx = ctx.fine_tune_target_x - ctx.odom_x;
-    double dy = ctx.fine_tune_target_y - ctx.odom_y;
-    double dyaw = ctx.fine_tune_target_yaw - ctx.odom_yaw;
-    // normalize yaw to [-pi, pi]
+    // ── compute yaw error ──
+    double dyaw = ctx.rotation_target_yaw - ctx.odom_yaw;
     while (dyaw > M_PI)  dyaw -= 2.0 * M_PI;
     while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
 
-    // ── bang-bang: compute fixed speeds ──
-    double vx = 0.0;
-    double vy = 0.0;
+    // ── bang-bang angular velocity ──
     double vyaw = 0.0;
-
-    if (dx > ctx.fine_tune_xy_threshold)
-        vx = ctx.fine_tune_speed_x;
-    else if (dx < -ctx.fine_tune_xy_threshold)
-        vx = -ctx.fine_tune_speed_x;
-
-    if (dy > ctx.fine_tune_xy_threshold)
-        vy = ctx.fine_tune_speed_y;
-    else if (dy < -ctx.fine_tune_xy_threshold)
-        vy = -ctx.fine_tune_speed_y;
-
     if (dyaw > ctx.fine_tune_yaw_threshold)
         vyaw = ctx.fine_tune_speed_yaw;
     else if (dyaw < -ctx.fine_tune_yaw_threshold)
         vyaw = -ctx.fine_tune_speed_yaw;
 
-    // ── send velocity ──
-    act.publishCmdVel(vx, vy, vyaw);
+    act.publishCmdVel(0.0, 0.0, vyaw);
 
     // ── check alignment ──
-    bool x_ok = std::abs(dx) <= ctx.fine_tune_xy_threshold;
-    bool y_ok = std::abs(dy) <= ctx.fine_tune_xy_threshold;
-    bool yaw_ok = std::abs(dyaw) <= ctx.fine_tune_yaw_threshold;
-
-    if (x_ok && y_ok && yaw_ok)
+    if (std::abs(dyaw) <= ctx.fine_tune_yaw_threshold)
     {
-        ++ctx.fine_tune_stable_count;
-        if (ctx.fine_tune_stable_count >= ctx.fine_tune_stable_required)
+        ++ctx.rotation_stable_count;
+        if (ctx.rotation_stable_count >= ctx.fine_tune_stable_required)
         {
             RCLCPP_INFO(rclcpp::get_logger("fsm"),
-                        "Odom fine-tune DONE: dx=%.3f dy=%.3f dyaw=%.3f (%d frames)",
-                        dx, dy, dyaw, ctx.fine_tune_stable_count);
-            act.postEvent({EventType::VISION_ALIGN_DONE, true});
+                        "Rotation done: dyaw=%.3f (%d frames)",
+                        dyaw, ctx.rotation_stable_count);
+            act.stopCmdVel();
+            if (sub_ == Sub::ROTATE_90_CW)
+                sub_ = Sub::NAV_POINT_Y;
+            else
+                sub_ = Sub::MOVE_Y_PLUS_50;
+            enterSub(ctx, act);
         }
     }
     else
     {
-        ctx.fine_tune_stable_count = 0;
-    }
-}
-
-/*
- * checkDockTransition — 在 onTick 中持续监控对接状态
- * 逻辑: 导航到了对接站 → 记录 spearhead 存在 → 等它消失或超时
- */
-void Zone1State::checkDockTransition(Context &ctx, ActionDispatcher &act)
-{
-    if (ctx.dock_step < 2)
-        return; // 先完成移动+旋转
-    if (ctx.nav_chain_in_progress)
-        return; // 还没到对接站
-
-    if (!ctx.dock_arrived)
-    {
-        // 刚到达对接站, 记录初始状态
-        ctx.dock_arrived = true;
-        ctx.spearhead_was_present = ctx.spearhead_exists;
-        ctx.dock_start_time = rclcpp::Clock().now();
-        RCLCPP_INFO(rclcpp::get_logger("fsm"),
-                    "Arrived at R1 dock. spearhead=%d", ctx.spearhead_was_present);
-        return;
-    }
-
-    // spearhead 从有变无 = 对接成功
-    if (ctx.spearhead_was_present && !ctx.spearhead_exists)
-    {
-        act.postEvent({EventType::DOCK_SUCCESS});
-        return;
-    }
-
-    // 超时
-    auto elapsed = (rclcpp::Clock().now() - ctx.dock_start_time).seconds();
-    if (elapsed > ctx.dock_timeout_s)
-    {
-        act.postEvent({EventType::DOCK_TIMEOUT});
+        ctx.rotation_stable_count = 0;
     }
 }
 
 // 全局一区超时: 超过 zone1_max_time_s (默认120s) 发出 ZONE1_TIMEOUT 事件
 void Zone1State::checkTimeLimit(Context &ctx, ActionDispatcher &act)
 {
-    if (sub_ == Sub::UP_STAIRS || sub_ == Sub::DOWN_STAIRS || sub_ == Sub::FINISH ||
-        sub_ == Sub::SPEARHEAD_POST_DOCK || sub_ == Sub::EXTEND_SUCTION)
-        return; // 已经在离开步骤了, 不打断
+    if (sub_ == Sub::WAIT_5S || sub_ == Sub::FINISH || sub_ == Sub::EXTEND_SUCTION)
+        return; // 已经在收尾步骤了, 不打断
 
     auto elapsed = (rclcpp::Clock().now() - ctx.zone1_start_time).seconds();
     if (elapsed > ctx.zone1_max_time_s)
