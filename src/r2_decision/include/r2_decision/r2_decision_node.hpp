@@ -207,9 +207,17 @@ struct Context
     int spearhead_post_dock_step{0};
     rclcpp::Time spearhead_post_dock_start{0, 0, RCL_ROS_TIME};
 
-    // ---- odometry fine-tune state ----
+    // ---- rotation state (ROTATE_90_CW / ROTATE_180 via cmd_vel + odom) ----
+    double rotation_target_yaw{0.0};
+    int rotation_stable_count{0};
+    rclcpp::Time rotation_start_time{0, 0, RCL_ROS_TIME};
+
+    // ---- odometry fine-tune state (deprecated, kept for compatibility) ----
     int fine_tune_stable_count{0};
     rclcpp::Time fine_tune_start_time{0, 0, RCL_ROS_TIME};
+
+    // ---- wait_5s state ----
+    rclcpp::Time wait_5s_start_time{0, 0, RCL_ROS_TIME};
 
     // ---- zone2 progress ----
     size_t zone2_index{0};
@@ -423,23 +431,20 @@ private:
     enum class Sub : uint8_t
     {
         EXTEND_SUCTION,     // 开局伸吸盘
-        NAV_POINT,          // 第一段: 变x
-        ROTATE_90_CW,       // 顺时针转90度
-        NAV_POINT_Y,        // 第二段: 变y
-        ODOM_FINE_TUNE,     // 里程计微调 (odometry-based cmd_vel)
+        NAV_POINT,          // 第一段: 变x (全局坐标系)
+        ROTATE_90_CW,       // 顺时针转90度 (odom+cmd_vel, 不依赖Nav2)
+        NAV_POINT_Y,        // 第二段: 变y (全局坐标系)
         OPERATE,            // 抓矛头
-        DOCK,
-        SPEARHEAD_POST_DOCK,  // 抓矛头对接后: 横移→旋转
-        UP_STAIRS,
-        DOWN_STAIRS,
+        ROTATE_180,         // 转180度 (odom+cmd_vel)
+        MOVE_Y_PLUS_50,     // y+0.5m (全局坐标系)
+        WAIT_5S,            // 等5秒
         FINISH,
     };
     Sub sub_{Sub::EXTEND_SUCTION};
 
     void enterSub(Context &ctx, ActionDispatcher &act);
     std::unique_ptr<TopState> handleSubEvent(Context &ctx, ActionDispatcher &act, const Event &e);
-    void tickOdomFineTune(Context &ctx, ActionDispatcher &act);
-    void checkDockTransition(Context &ctx, ActionDispatcher &act);
+    void tickRotation(Context &ctx, ActionDispatcher &act);
     void checkTimeLimit(Context &ctx, ActionDispatcher &act);
 };
 
