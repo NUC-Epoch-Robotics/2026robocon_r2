@@ -432,10 +432,10 @@ private:
     {
         EXTEND_SUCTION,     // 开局伸吸盘
         NAV_POINT,          // 第一段: 变x (全局坐标系)
-        ROTATE_90_CW,       // 顺时针转90度 (odom+cmd_vel, 不依赖Nav2)
+        ROTATE_90_CW,       // 顺时针转90度 (Nav2 navigate_to_pose)
         NAV_POINT_Y,        // 第二段: 变y (全局坐标系)
         OPERATE,            // 抓矛头
-        ROTATE_180,         // 转180度 (odom+cmd_vel)
+        ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
         MOVE_Y_PLUS_50,     // y+0.5m (全局坐标系)
         WAIT_5S,            // 等5秒
         FINISH,
@@ -444,7 +444,6 @@ private:
 
     void enterSub(Context &ctx, ActionDispatcher &act);
     std::unique_ptr<TopState> handleSubEvent(Context &ctx, ActionDispatcher &act, const Event &e);
-    void tickRotation(Context &ctx, ActionDispatcher &act);
     void checkTimeLimit(Context &ctx, ActionDispatcher &act);
 };
 

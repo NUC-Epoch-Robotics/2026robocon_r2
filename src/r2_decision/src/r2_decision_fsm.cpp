@@ -14,9 +14,10 @@
  *                            │
  *                            └── 超时 → FINISH → Zone2
  *
- *   Zone1 新流程 (2024):
- *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转) → NAV_POINT_Y(走Y)
- *     → OPERATE(抓) → ROTATE_180(转180°) → MOVE_Y_PLUS_50(y+0.5) → WAIT_5S(等5s) → FINISH → Zone2
+ *   Zone1 新流程:
+ *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(Nav2原地转90°)
+ *     → NAV_POINT_Y(走Y) → OPERATE(抓) → ROTATE_180(Nav2转180°)
+ *     → MOVE_Y_PLUS_50(y+0.5) → WAIT_5S(等5s) → FINISH → Zone2
  *
  *   每个大状态内部用 sub_ 枚举做子状态切换:
  *     enterSub()  = 进入子状态时执行动作 (发导航、发机械臂指令、启台阶)
@@ -183,10 +184,6 @@ std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &ac
 //   4. FINISH: 构建 Zone2 任务列表, 切换到 Zone2
 std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act)
 {
-    // 旋转状态: cmd_vel + odom 驱动, 不依赖 Nav2
-    if (sub_ == Sub::ROTATE_90_CW || sub_ == Sub::ROTATE_180)
-        tickRotation(ctx, act);
-
     checkTimeLimit(ctx, act);
 
     // WAIT_5S: 计时5秒后推进
@@ -300,15 +297,13 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_90_CW:
     {
-        // cmd_vel 原地顺时针转90度, odom 校验到位
-        ctx.rotation_target_yaw = ctx.odom_yaw - M_PI_2;
-        // normalize to [-pi, pi]
-        while (ctx.rotation_target_yaw > M_PI)  ctx.rotation_target_yaw -= 2.0 * M_PI;
-        while (ctx.rotation_target_yaw < -M_PI) ctx.rotation_target_yaw += 2.0 * M_PI;
-        ctx.rotation_stable_count = 0;
-        ctx.rotation_start_time = rclcpp::Clock().now();
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW target_yaw=%.3f (current=%.3f)",
-                    ctx.rotation_target_yaw, ctx.odom_yaw);
+        // 在当前位置顺时针转90度 (yaw = -π/2 → qz=-0.707, qw=0.707)
+        // Nav2 navigate_to_pose: 同位置, 改朝向
+        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
+        auto it = ctx.point_table.find(pid);
+        const double target_z = (it != ctx.point_table.end()) ? it->second.z : 0.0;
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
+        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, target_z, 0, 0, -0.707, 0.707, ctx);
         break;
     }
     case Sub::NAV_POINT_Y:
@@ -362,16 +357,10 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_180:
     {
-        // cmd_vel 原地转180度, 任意方向 (选+cw: +π)
-        double cyaw = ctx.odom_yaw;
-        ctx.rotation_target_yaw = cyaw + M_PI;
-        // normalize to [-pi, pi]
-        while (ctx.rotation_target_yaw > M_PI)  ctx.rotation_target_yaw -= 2.0 * M_PI;
-        while (ctx.rotation_target_yaw < -M_PI) ctx.rotation_target_yaw += 2.0 * M_PI;
-        ctx.rotation_stable_count = 0;
-        ctx.rotation_start_time = rclcpp::Clock().now();
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_180 target_yaw=%.3f (current=%.3f)",
-                    ctx.rotation_target_yaw, cyaw);
+        // 在当前位置转180度 (yaw=±π → qz=±1, qw=0)
+        // Nav2 navigate_to_pose: 同位置, 反朝向
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_180 at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
+        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, 1.0, 0, ctx);
         break;
     }
     case Sub::MOVE_Y_PLUS_50:
@@ -433,7 +422,14 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::ROTATE_90_CW:
-        // 旋转由 onTick → tickRotation 驱动, 完成后直接切 NAV_POINT_Y
+        // 顺时针90度完成 → 走第二段y
+        if (e.type == EventType::NAV_DONE)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: rotate failed, continue anyway");
+            sub_ = Sub::NAV_POINT_Y;
+            enterSub(ctx, act);
+        }
         break;
 
     case Sub::NAV_POINT_Y:
@@ -488,7 +484,14 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::ROTATE_180:
-        // 旋转由 onTick → tickRotation 驱动, 完成后直接切 MOVE_Y_PLUS_50
+        // 转180度完成 → y+0.5
+        if (e.type == EventType::NAV_DONE)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: rotate180 failed, continue anyway");
+            sub_ = Sub::MOVE_Y_PLUS_50;
+            enterSub(ctx, act);
+        }
         break;
 
     case Sub::MOVE_Y_PLUS_50:
@@ -510,73 +513,6 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
     }
     return nullptr;
-}
-
-/*
- * tickRotation — cmd_vel + odom 原地旋转 (用于 ROTATE_90_CW 和 ROTATE_180)
- *   bang-bang yaw 控制: |dyaw| > yaw_threshold → 恒定 angular.z
- *   完成条件: |dyaw| <= yaw_threshold 持续 N 帧
- *   超时: 15s (降级继续, 不阻塞流程)
- */
-void Zone1State::tickRotation(Context &ctx, ActionDispatcher &act)
-{
-    // ── timeout ──
-    auto elapsed = (rclcpp::Clock().now() - ctx.rotation_start_time).seconds();
-    if (elapsed > 15.0)
-    {
-        RCLCPP_WARN(rclcpp::get_logger("fsm"), "Rotation timeout (%.1fs), continue anyway", elapsed);
-        act.stopCmdVel();
-        if (sub_ == Sub::ROTATE_90_CW)
-            sub_ = Sub::NAV_POINT_Y;
-        else
-            sub_ = Sub::MOVE_Y_PLUS_50;
-        enterSub(ctx, act);
-        return;
-    }
-
-    // ── no odometry yet → wait ──
-    if (!ctx.odom_received)
-    {
-        act.stopCmdVel();
-        ctx.rotation_stable_count = 0;
-        return;
-    }
-
-    // ── compute yaw error ──
-    double dyaw = ctx.rotation_target_yaw - ctx.odom_yaw;
-    while (dyaw > M_PI)  dyaw -= 2.0 * M_PI;
-    while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
-
-    // ── bang-bang angular velocity ──
-    double vyaw = 0.0;
-    if (dyaw > ctx.fine_tune_yaw_threshold)
-        vyaw = ctx.fine_tune_speed_yaw;
-    else if (dyaw < -ctx.fine_tune_yaw_threshold)
-        vyaw = -ctx.fine_tune_speed_yaw;
-
-    act.publishCmdVel(0.0, 0.0, vyaw);
-
-    // ── check alignment ──
-    if (std::abs(dyaw) <= ctx.fine_tune_yaw_threshold)
-    {
-        ++ctx.rotation_stable_count;
-        if (ctx.rotation_stable_count >= ctx.fine_tune_stable_required)
-        {
-            RCLCPP_INFO(rclcpp::get_logger("fsm"),
-                        "Rotation done: dyaw=%.3f (%d frames)",
-                        dyaw, ctx.rotation_stable_count);
-            act.stopCmdVel();
-            if (sub_ == Sub::ROTATE_90_CW)
-                sub_ = Sub::NAV_POINT_Y;
-            else
-                sub_ = Sub::MOVE_Y_PLUS_50;
-            enterSub(ctx, act);
-        }
-    }
-    else
-    {
-        ctx.rotation_stable_count = 0;
-    }
 }
 
 // 全局一区超时: 超过 zone1_max_time_s (默认120s) 发出 ZONE1_TIMEOUT 事件
