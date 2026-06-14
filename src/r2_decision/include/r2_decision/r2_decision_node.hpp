@@ -222,6 +222,7 @@ struct Context
     // ---- zone2 progress ----
     size_t zone2_index{0};
     int zone2_arm_retry{0};
+    bool zone2_stair_pending{false};  // true = 等台阶完成后再旋转
     int entry_grab_step{0};
     int zone2_grab_step{0};
     int zone2_point0_substep{0};
