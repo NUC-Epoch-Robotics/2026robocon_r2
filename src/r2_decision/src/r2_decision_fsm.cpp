@@ -297,23 +297,26 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_90_CW:
     {
-        // 在当前位置顺时针转90度 (yaw = -π/2 → qz=-0.707, qw=0.707)
-        // Nav2 navigate_to_pose: 同位置, 改朝向
-        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
-        auto it = ctx.point_table.find(pid);
-        const double target_z = (it != ctx.point_table.end()) ? it->second.z : 0.0;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
-        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, target_z, 0, 0, -0.707, 0.707, ctx);
+        // 从当前朝向顺时针转90度 (相对旋转, 不是绝对角度)
+        double target_yaw = ctx.odom_yaw - M_PI_2;
+        while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
+        while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
+        double qz = std::sin(target_yaw / 2.0);
+        double qw = std::cos(target_yaw / 2.0);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f) target_yaw=%.3f (current=%.3f)",
+                    ctx.current_x, ctx.current_y, target_yaw, ctx.odom_yaw);
+        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, qz, qw, ctx);
         break;
     }
     case Sub::NAV_POINT_Y:
     {
         // 第二段: 变y到矛头点 (全局坐标系), x已经在上一步到位了
+        // 保持转90°后的朝向 (qz=-0.707, qw=0.707), 不让Nav2偷偷转回去
         const int pid = ctx.zone1_route_ids[ctx.zone1_index];
         auto it = ctx.point_table.find(pid);
         const auto &t = it->second;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d y=%.2f (x=%.2f)", t.id, t.y, t.x);
-        act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, 0, 1, ctx);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: nav point %d y=%.2f (x=%.2f, keep -90deg)", t.id, t.y, t.x);
+        act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, -0.707, 0.707, ctx);
         break;
     }
     case Sub::OPERATE:
@@ -357,18 +360,25 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_180:
     {
-        // 在当前位置转180度 (yaw=±π → qz=±1, qw=0)
-        // Nav2 navigate_to_pose: 同位置, 反朝向
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_180 at (%.2f, %.2f)", ctx.current_x, ctx.current_y);
-        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, 1.0, 0, ctx);
+        // 从当前朝向转180度: 当前-90° → +90° (qz=0.707, qw=0.707)
+        // 如果当前是其他朝向, 同理加π
+        double target_yaw = ctx.odom_yaw + M_PI;
+        while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
+        while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
+        double qz = std::sin(target_yaw / 2.0);
+        double qw = std::cos(target_yaw / 2.0);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_180 at (%.2f, %.2f) target_yaw=%.3f",
+                    ctx.current_x, ctx.current_y, target_yaw);
+        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, qz, qw, ctx);
         break;
     }
     case Sub::MOVE_Y_PLUS_50:
     {
-        // y + 0.5m (全局坐标系)
+        // y + 0.5m (全局坐标系), 保持当前朝向不转
         double ty = ctx.current_y + 0.5;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: MOVE_Y_PLUS_50 to y=%.2f (x=%.2f)", ty, ctx.current_x);
-        act.sendNavigateWithQuat(ctx.current_x, ty, 0, 0, 0, 0, 1, ctx);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: MOVE_Y_PLUS_50 to y=%.2f (x=%.2f, keep heading)", ty, ctx.current_x);
+        // ROTATE_180 后朝向是 90° (qz=0.707, qw=0.707), 保持不变
+        act.sendNavigateWithQuat(ctx.current_x, ty, 0, 0, 0, 0.707, 0.707, ctx);
         break;
     }
     case Sub::WAIT_5S:
