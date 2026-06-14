@@ -438,6 +438,7 @@ private:
         ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
         MOVE_Y_PLUS_50,     // y+0.5m (全局坐标系)
         WAIT_5S,            // 等5秒
+        ROTATE_BACK,        // 顺时针转90°回来 (恢复0°朝向)
         FINISH,
     };
     Sub sub_{Sub::EXTEND_SUCTION};

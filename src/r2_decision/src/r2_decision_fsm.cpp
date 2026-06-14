@@ -17,7 +17,8 @@
  *   Zone1 新流程:
  *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(Nav2原地转90°)
  *     → NAV_POINT_Y(走Y) → OPERATE(抓) → ROTATE_180(Nav2转180°)
- *     → MOVE_Y_PLUS_50(y+0.5) → WAIT_5S(等5s) → FINISH → Zone2
+ *     → MOVE_Y_PLUS_50(y+0.5) → WAIT_5S(等5s) → ROTATE_BACK(Nav2转回0°)
+ *     → FINISH → Zone2
  *
  *   每个大状态内部用 sub_ 枚举做子状态切换:
  *     enterSub()  = 进入子状态时执行动作 (发导航、发机械臂指令、启台阶)
@@ -164,6 +165,7 @@ const char *Zone1State::name() const
     case Sub::ROTATE_180:     return "Zone1/Rotate180";
     case Sub::MOVE_Y_PLUS_50: return "Zone1/MoveYPlus50";
     case Sub::WAIT_5S:        return "Zone1/Wait5s";
+    case Sub::ROTATE_BACK:    return "Zone1/RotateBack";
     case Sub::FINISH:         return "Zone1/Finish";
     }
     return "Zone1";
@@ -193,7 +195,7 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         if (elapsed > 5.0)
         {
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S done");
-            sub_ = Sub::FINISH;
+            sub_ = Sub::ROTATE_BACK;
             enterSub(ctx, act);
         }
     }
@@ -388,6 +390,19 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S");
         break;
     }
+    case Sub::ROTATE_BACK:
+    {
+        // 从当前朝向顺时针转90° 回到0°朝向 (相对旋转)
+        double target_yaw = ctx.odom_yaw - M_PI_2;
+        while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
+        while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
+        double qz = std::sin(target_yaw / 2.0);
+        double qw = std::cos(target_yaw / 2.0);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_BACK CW 90deg target_yaw=%.3f (current=%.3f)",
+                    target_yaw, ctx.odom_yaw);
+        act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, qz, qw, ctx);
+        break;
+    }
     case Sub::FINISH:
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: FINISH");
         break;
@@ -519,6 +534,17 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         // WAIT_5S 由 onTick 计时驱动, 不需要处理事件
         break;
 
+    case Sub::ROTATE_BACK:
+        // 顺时针转90°回来 → FINISH → Zone2
+        if (e.type == EventType::NAV_DONE)
+        {
+            if (!e.success)
+                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: rotate_back failed, continue anyway");
+            sub_ = Sub::FINISH;
+            enterSub(ctx, act);
+        }
+        break;
+
     case Sub::FINISH:
         break;
     }
@@ -528,7 +554,7 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
 // 全局一区超时: 超过 zone1_max_time_s (默认120s) 发出 ZONE1_TIMEOUT 事件
 void Zone1State::checkTimeLimit(Context &ctx, ActionDispatcher &act)
 {
-    if (sub_ == Sub::WAIT_5S || sub_ == Sub::FINISH || sub_ == Sub::EXTEND_SUCTION)
+    if (sub_ == Sub::WAIT_5S || sub_ == Sub::ROTATE_BACK || sub_ == Sub::FINISH || sub_ == Sub::EXTEND_SUCTION)
         return; // 已经在收尾步骤了, 不打断
 
     auto elapsed = (rclcpp::Clock().now() - ctx.zone1_start_time).seconds();
