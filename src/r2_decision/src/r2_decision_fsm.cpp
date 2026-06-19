@@ -775,26 +775,50 @@ void Zone2State::enterSub(Context &ctx, ActionDispatcher &act)
         const auto &t = ctx.zone2_tasks[ctx.zone2_index];
         if (ctx.use_fixed_zone2_route)
         {
-            // ── 固定路线: 跳过抓取 (吸盘有问题), 只做前导导航 ──
-            // Point0: 导航冲向方块, 等 NAV_DONE 后进台阶序列
+            // ── 固定路线抓取 ──
+            // Point0 的多步序列 (上台阶/旋转), 已激活则继续
+            if (t.id == 0 && ctx.zone2_point0_sequence_active)
+            {
+                handlePoint0Substep(ctx, act);
+                return;
+            }
+            // Point0 第一步: 发抓取指令, 导航冲向方块
             if (t.id == 0)
             {
                 if (ctx.zone2_grab_step == 0)
                 {
-                    RCLCPP_INFO(rclcpp::get_logger("fsm"), "Point0: skip grab, forward to block (%.2f,%.2f)", t.x, t.y);
-                    ctx.zone2_grab_step = 2;  // 标记: 跳过抓取, 等 NAV_DONE
-                    ctx.grab_context = GrabContext::NONE;
+                    if (ctx.grab_context != GrabContext::ZONE2_FIXED)
+                    {
+                        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Point0 grab: START is_finsh=%d", t.grab_is_finsh);
+                        act.startZone2Grab(t.grab_is_finsh, ctx);
+                    }
+                    RCLCPP_INFO(rclcpp::get_logger("fsm"), "Point0 grab: forward to block (%.2f,%.2f)", t.x, t.y);
+                    ctx.zone2_grab_step = 1;
                     act.sendNavigateWithQuat(t.x, t.y, 0, t.qx, t.qy, t.qz, t.qw, ctx);
                 }
                 return;
             }
-            // 非 Point0: 跳过抓取, 直接导航到方块位置, 等 NAV_DONE
-            if (ctx.zone2_grab_step == 0)
+            // 非 Point0 固定路线抓取: backoff → grab_start
+            if (ctx.grab_context != GrabContext::ZONE2_FIXED)
             {
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2 point %d: skip grab, nav to block (%.2f,%.2f)", t.id, t.x, t.y);
-                ctx.zone2_grab_step = 2;  // 标记: 跳过抓取, 等 NAV_DONE
-                ctx.grab_context = GrabContext::NONE;
-                act.sendNavigateWithQuat(t.x, t.y, 0, t.qx, t.qy, t.qz, t.qw, ctx);
+                // step 0: 后退一小段 (zone2_fixed_backoff=0.1m)
+                if (ctx.zone2_grab_step == 0)
+                {
+                    double yaw = ActionDispatcher::yawFromQuat(t.qx, t.qy, t.qz, t.qw);
+                    double bx = t.approach_x - std::cos(yaw) * ctx.zone2_fixed_backoff;
+                    double by = t.approach_y - std::sin(yaw) * ctx.zone2_fixed_backoff;
+                    RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2Grab point %d: backoff to (%.2f,%.2f)", t.id, bx, by);
+                    ctx.zone2_grab_step = 1;
+                    act.sendNavigateWithQuat(bx, by, 0, t.qx, t.qy, t.qz, t.qw, ctx);
+                    return;
+                }
+                // step 1: 后退到了, 开始抓取
+                if (ctx.zone2_grab_step == 1)
+                {
+                    RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2Grab point %d: START is_finsh=%d", t.id, t.grab_is_finsh);
+                    act.startZone2Grab(t.grab_is_finsh, ctx);
+                    ctx.zone2_grab_step = 2;
+                }
             }
             return;
         }
@@ -951,27 +975,6 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
                 ctx.zone2_point0_substep = 5;
             ctx.point0_nav_sent = false;
             tickGrab(ctx, act);
-        }
-        // ── 固定路线跳过抓取: 导航到方块位置后的 NAV_DONE ──
-        else if (e.type == EventType::NAV_DONE && ctx.use_fixed_zone2_route && ctx.grab_context == GrabContext::NONE && ctx.zone2_grab_step == 2)
-        {
-            if (!e.success)
-                RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2: nav to block failed");
-            ctx.zone2_grab_step = 0;
-            const auto &t = ctx.zone2_tasks[ctx.zone2_index];
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2 point %d: skip grab done, stair=%d rot=%d", t.id, t.stair_cmd, t.use_rotate);
-            if (t.stair_cmd == 1)
-                sub_ = Sub::UP_STAIRS;
-            else if (t.stair_cmd == 2)
-                sub_ = Sub::DOWN_STAIRS;
-            else if (t.use_rotate)
-                sub_ = Sub::ROTATE;
-            else
-            {
-                ++ctx.zone2_index;
-                sub_ = Sub::NAV_POINT;
-            }
-            enterSub(ctx, act);
         }
         // ── 固定路线非 Point0: backoff/forward 导航完成 ──
         else if (e.type == EventType::NAV_DONE && ctx.use_fixed_zone2_route)
