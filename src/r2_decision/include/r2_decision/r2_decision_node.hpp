@@ -220,6 +220,7 @@ struct Context
 
     // ---- wait_5s state ----
     rclcpp::Time wait_5s_start_time{0, 0, RCL_ROS_TIME};
+    int zone1_dock_step{0};  // DOCKING_DONE 子步骤: 0=等5s, 1=发area=1后等5s
 
     // ---- zone2 progress ----
     size_t zone2_index{0};
@@ -443,7 +444,7 @@ private:
         ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
         DOCKING,            // 矛头对接 (zhuangtai=2/3)
         WAIT_5S,            // 等5秒
-        DOCKING_DONE,       // 发 zhuangtai=4, 等5秒
+        DOCKING_DONE,       // 发 zhuangtai=4, 等5s, 发 zhuangtai=0 area=1, 等5s, 发 zhuangtai=0 area=2
         FINISH,
     };
     Sub sub_{Sub::EXTEND_SUCTION};

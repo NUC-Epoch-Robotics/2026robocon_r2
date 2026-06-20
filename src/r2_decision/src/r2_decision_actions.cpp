@@ -161,8 +161,8 @@ void ActionDispatcher::handleSpearheadAck(uint8_t command)
 void ActionDispatcher::handleSpearheadDone(uint8_t command, bool success)
 {
     waiting_spearhead_ack_ = false;
-    // 不在这里清 spearhead_active_, 让 FSM 处理完事件后再清
-    // 防止心跳在 FSM 发下一个命令之前发 zhuangtai=0
+    spearhead_active_ = false;  // DONE 到了就清, FSM 在同一个 tick 里会发下一个命令
+    pending_spearhead_cmd_ = 0;
     if (command != last_spearhead_done_cmd_ || success != last_spearhead_done_success_)
     {
         RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD DONE: cmd=%d success=%d", command, success);

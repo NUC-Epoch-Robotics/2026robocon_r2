@@ -206,15 +206,24 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         }
     }
 
-    // DOCKING_DONE: 等5秒后发 zhuangtai=0 + area=2 复位, 进 FINISH
+    // DOCKING_DONE: zhuangtai=4 → 等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2 → FINISH
     if (sub_ == Sub::DOCKING_DONE)
     {
         auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
-        if (elapsed > 5.0)
+        if (ctx.zone1_dock_step == 0 && elapsed > 5.0)
         {
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE done, send zhuangtai=0 area=2");
+            // zhuangtai=4 的 5s 到了, 发 zhuangtai=0 area=1
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → zhuangtai=0 area=1");
+            act.publishCmdWithArea(0, 0, 0);  // zhuangtai=0, area=1 (ctx.area 还是 1)
+            ctx.wait_5s_start_time = rclcpp::Clock().now();
+            ctx.zone1_dock_step = 1;
+        }
+        else if (ctx.zone1_dock_step == 1 && elapsed > 5.0)
+        {
+            // 5s 到了, 发 zhuangtai=0 area=2 切二区
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → zhuangtai=0 area=2");
             ctx.area = 2;
-            act.publishCmd(0, 0, 0, 2);  // zhuangtai=0 复位, area=2 切二区
+            act.publishCmd(0, 0, 0, 2);  // zhuangtai=0, area=2
             sub_ = Sub::FINISH;
             enterSub(ctx, act);
         }
@@ -401,10 +410,11 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::DOCKING_DONE:
     {
-        // 发 zhuangtai=4
+        // 发 zhuangtai=4, 然后等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE zhuangtai=4");
         act.sendSpearheadCommand(4);
         ctx.wait_5s_start_time = rclcpp::Clock().now();
+        ctx.zone1_dock_step = 0;
         break;
     }
     case Sub::FINISH:
