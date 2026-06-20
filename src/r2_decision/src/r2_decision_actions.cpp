@@ -135,6 +135,8 @@ void ActionDispatcher::sendSpearheadCommand(uint8_t cmd)
     pending_spearhead_cmd_ = cmd;
     waiting_spearhead_ack_ = true;
     spearhead_active_ = true;  // 直到 DONE 前一直有效, 用于回调路由
+    spearhead_acked_ = false;        // 还没收到对应 ACK (下位机送达应答)
+    spearhead_retry_count_ = 1;      // 首次发送也算一次
 
     auto now_time = node_.now();
     spearhead_cmd_start_time_ = now_time;
@@ -146,30 +148,47 @@ void ActionDispatcher::sendSpearheadCommand(uint8_t cmd)
 
 void ActionDispatcher::handleSpearheadAck(uint8_t command)
 {
-    if (!waiting_spearhead_ack_ || command != pending_spearhead_cmd_)
+    // ACK 只表示"下位机收到了这条指令". 注意: 下位机忙时(上条还在跑)收到新指令,
+    // 虽然会"忽略"但仍会回 ACK, 所以 ACK 不能证明它真的开始执行.
+    // 这里 ACK 只用于停止 ACK-级快速重发; 真正完成要等 DONE.
+    if (!spearhead_active_ || command != pending_spearhead_cmd_)
     {
-        if (command != pending_spearhead_cmd_)
-            RCLCPP_WARN(rclcpp::get_logger("actions"), "Ignore SPEARHEAD ACK for cmd %d, waiting %d",
-                        command, pending_spearhead_cmd_);
+        // hold 期间心跳重发同一指令会不断带回 ACK, 这是正常的, 不刷屏
         return;
     }
-    waiting_spearhead_ack_ = false;
-    last_idle_heartbeat_time_ = node_.now();
-    RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD ACK received: cmd=%d", command);
+    if (waiting_spearhead_ack_)
+    {
+        waiting_spearhead_ack_ = false;
+        last_idle_heartbeat_time_ = node_.now();
+        RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD ACK received: cmd=%d", command);
+    }
+    spearhead_acked_ = true;
+    // 收到 ACK 后重置"等待 DONE"计时: 下位机已开始执行这条指令
+    spearhead_cmd_start_time_ = node_.now();
 }
 
-void ActionDispatcher::handleSpearheadDone(uint8_t command, bool success)
+bool ActionDispatcher::handleSpearheadDone(uint8_t command, bool success)
 {
+    // 严格校验: 只有对本条 pending 指令的 DONE 才算完成.
+    // 迟到的上一条 DONE (command != pending_spearhead_cmd_) 丢弃, 避免误触发 ARM_DONE.
+    if (!spearhead_active_ || command != pending_spearhead_cmd_)
+    {
+        RCLCPP_DEBUG(rclcpp::get_logger("actions"),
+                     "Drop stale SPEARHEAD DONE: cmd=%d (pending=%d)", command, pending_spearhead_cmd_);
+        return false;
+    }
+
     waiting_spearhead_ack_ = false;
     spearhead_active_ = false;
     pending_spearhead_cmd_ = 0;
+    spearhead_acked_ = false;
+    spearhead_retry_count_ = 0;
     spearhead_done_pending_ = true;  // 标记: 跳过下一次心跳, 等 FSM 处理完事件
-    if (command != last_spearhead_done_cmd_ || success != last_spearhead_done_success_)
-    {
-        RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD DONE: cmd=%d success=%d", command, success);
-        last_spearhead_done_cmd_ = command;
-        last_spearhead_done_success_ = success;
-    }
+
+    RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD DONE: cmd=%d success=%d", command, success);
+    last_spearhead_done_cmd_ = command;
+    last_spearhead_done_success_ = success;
+    return true;  // 上层 (onUpperDone) 据此 postEvent(ARM_DONE)
 }
 
 // ==========================================================================
@@ -186,18 +205,70 @@ void ActionDispatcher::tickReliability()
 {
     auto now_time = node_.now();
 
-    // spearhead ACK 超时重发 (优先级高于 arm command)
-    if (waiting_spearhead_ack_)
+    // spearhead 指令可靠性: ACK 超时快速重发 + DONE 超时重发有限次再跳
+    if (spearhead_active_ && pending_spearhead_cmd_ != 0)
     {
-        if ((now_time - last_spearhead_send_time_).nanoseconds() >= kUpperCommandResendPeriodMs * 1'000'000)
+        // 阶段1: 还没收到 ACK → 每 kUpperCommandResendPeriodMs 重发, 有限次后放弃 (防下位机无响应死等)
+        if (waiting_spearhead_ack_)
         {
-            publishCmdWithArea(0, 0, pending_spearhead_cmd_);
-            last_spearhead_send_time_ = now_time;
+            if ((now_time - last_spearhead_send_time_).nanoseconds() >= kUpperCommandResendPeriodMs * 1'000'000)
+            {
+                if (spearhead_retry_count_ >= kSpearheadMaxRetry)
+                {
+                    RCLCPP_WARN(rclcpp::get_logger("actions"),
+                                "SPEARHEAD cmd %d no ACK after %d attempts, give up",
+                                pending_spearhead_cmd_, kSpearheadMaxRetry);
+                    uint8_t giveup_cmd = pending_spearhead_cmd_;
+                    spearhead_active_ = false;
+                    waiting_spearhead_ack_ = false;
+                    pending_spearhead_cmd_ = 0;
+                    spearhead_acked_ = false;
+                    spearhead_retry_count_ = 0;
+                    spearhead_done_pending_ = true;
+                    last_spearhead_done_cmd_ = giveup_cmd;
+                    last_spearhead_done_success_ = false;
+                    postEvent({EventType::ARM_DONE, false});
+                    return;
+                }
+                ++spearhead_retry_count_;
+                publishCmdWithArea(0, 0, pending_spearhead_cmd_);
+                last_spearhead_send_time_ = now_time;
+                spearhead_cmd_start_time_ = now_time;
+            }
         }
-        if ((now_time - spearhead_cmd_start_time_).nanoseconds() >= kUpperCommandTimeoutMs * 1'000'000)
+        // 阶段2: 收到 ACK 但等不到 DONE → 超过 kSpearheadDoneTimeoutMs 重发, 有限次后再跳过
+        else if (spearhead_acked_ &&
+                 (now_time - spearhead_cmd_start_time_).nanoseconds() >= kSpearheadDoneTimeoutMs * 1'000'000)
         {
-            RCLCPP_WARN(rclcpp::get_logger("actions"), "SPEARHEAD cmd %d ACK timeout, resending...", pending_spearhead_cmd_);
-            spearhead_cmd_start_time_ = now_time;
+            if (spearhead_retry_count_ < kSpearheadMaxRetry)
+            {
+                ++spearhead_retry_count_;
+                RCLCPP_WARN(rclcpp::get_logger("actions"),
+                            "SPEARHEAD cmd %d DONE timeout, resend (%d/%d)",
+                            pending_spearhead_cmd_, spearhead_retry_count_, kSpearheadMaxRetry);
+                publishCmdWithArea(0, 0, pending_spearhead_cmd_);
+                waiting_spearhead_ack_ = true;
+                spearhead_acked_ = false;
+                last_spearhead_send_time_ = now_time;
+                spearhead_cmd_start_time_ = now_time;
+            }
+            else
+            {
+                // 重试耗尽: 当作失败交给 FSM 跳过
+                RCLCPP_WARN(rclcpp::get_logger("actions"),
+                            "SPEARHEAD cmd %d DONE timeout after %d retries, give up",
+                            pending_spearhead_cmd_, kSpearheadMaxRetry);
+                uint8_t giveup_cmd = pending_spearhead_cmd_;
+                spearhead_active_ = false;
+                waiting_spearhead_ack_ = false;
+                pending_spearhead_cmd_ = 0;
+                spearhead_acked_ = false;
+                spearhead_retry_count_ = 0;
+                spearhead_done_pending_ = true;
+                last_spearhead_done_cmd_ = giveup_cmd;
+                last_spearhead_done_success_ = false;
+                postEvent({EventType::ARM_DONE, false});
+            }
         }
         return;
     }

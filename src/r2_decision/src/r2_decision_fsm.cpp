@@ -206,13 +206,15 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         }
     }
 
-    // DOCKING_DONE: zhuangtai=4 → 等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2 → FINISH
-    if (sub_ == Sub::DOCKING_DONE)
+    // DOCKING_DONE: zhuangtai=4 →(等 DONE)→ 等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2 → FINISH
+    //   step0 的计时起点 = 收到 zhuangtai=4 的 ARM_DONE 那一刻 (handleSubEvent 里设, 见下).
+    //   还在等 zhuangtai=4 DONE 时 (zone1_dock4_wait_done) 不计时.
+    if (sub_ == Sub::DOCKING_DONE && !ctx.zone1_dock4_wait_done)
     {
         auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
         if (ctx.zone1_dock_step == 0 && elapsed > 5.0)
         {
-            // zhuangtai=4 的 5s 到了, 发 zhuangtai=0 area=1
+            // zhuangtai=4 的 5s 到了, 发 zhuangtai=0 area=1 (下位机不回 DONE, 靠计时)
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → zhuangtai=0 area=1");
             act.setHoldCmd(0);  // 清掉 hold, 允许发 zhuangtai=0
             act.publishCmdWithArea(0, 0, 0);  // zhuangtai=0, area=1
@@ -413,12 +415,13 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::DOCKING_DONE:
     {
-        // 发 zhuangtai=4, 然后等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE zhuangtai=4");
+        // 发 zhuangtai=4. 收到下位机对本指令的 DONE 后才开始 5s 计时 (见 onTick / handleSubEvent).
+        // 这样确保下位机真的做完 zhuangtai=4 再往下发 zhuangtai=0, 避免提前发指令.
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE zhuangtai=4 (等 DONE 再计时)");
         act.setHoldCmd(4);  // 等待期间保持 zhuangtai=4 不松夹爪
-        act.sendSpearheadCommand(4);
-        ctx.wait_5s_start_time = rclcpp::Clock().now();
+        ctx.zone1_dock4_wait_done = true;
         ctx.zone1_dock_step = 0;
+        act.sendSpearheadCommand(4);
         break;
     }
     case Sub::FINISH:
@@ -545,10 +548,14 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::DOCKING_DONE:
-        // zhuangtai=4 的 ARM_DONE, 清 spearhead_active_ 等 onTick 5s 到期
-        if (e.type == EventType::ARM_DONE)
+        // zhuangtai=4 的 ARM_DONE 到达 → 开始 5s 计时.
+        // 之前 enterSub 发完 zhuangtai=4 并不立刻计时, 就是为了等它真正 DONE.
+        if (e.type == EventType::ARM_DONE && ctx.zone1_dock4_wait_done)
         {
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE ack, wait 5s");
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE ack, start 5s wait");
+            ctx.zone1_dock4_wait_done = false;
+            ctx.wait_5s_start_time = rclcpp::Clock().now();
+            ctx.zone1_dock_step = 0;
         }
         break;
 

@@ -129,6 +129,10 @@ constexpr int kZone2ArmMaxRetry = 1;
 constexpr int64_t kUpperCommandResendPeriodMs = 100;
 constexpr int64_t kIdleHeartbeatPeriodMs = 500;
 constexpr int64_t kUpperCommandTimeoutMs = 1200;
+// spearhead 指令: 单条最多重发次数, 超过后当作失败交给 FSM 跳过
+constexpr int kSpearheadMaxRetry = 3;
+// spearhead 单次等待 DONE 的超时 (ms). 真机动作较慢, 给足时间再重发
+constexpr int64_t kSpearheadDoneTimeoutMs = 3000;
 constexpr int64_t kButtonDebounceMs = 120;
 
 // ==========================================================================
@@ -221,6 +225,7 @@ struct Context
     // ---- wait_5s state ----
     rclcpp::Time wait_5s_start_time{0, 0, RCL_ROS_TIME};
     int zone1_dock_step{0};  // DOCKING_DONE 子步骤: 0=等5s, 1=发area=1后等5s
+    bool zone1_dock4_wait_done{false};  // DOCKING_DONE: 发 zhuangtai=4 后是否仍在等本指令 DONE (未到则不计时)
 
     // ---- zone2 progress ----
     size_t zone2_index{0};
@@ -275,7 +280,7 @@ public:
     // --- spearhead command (uses zhuangtai field) ---
     void sendSpearheadCommand(uint8_t cmd);
     void handleSpearheadAck(uint8_t command);
-    void handleSpearheadDone(uint8_t command, bool success);
+    bool handleSpearheadDone(uint8_t command, bool success);  // 返回是否接受 (cmd 匹配)
     bool isWaitingSpearheadAck() const { return waiting_spearhead_ack_; }
     bool hasPendingSpearhead() const { return spearhead_active_; }
     void setHoldCmd(uint8_t cmd) { hold_cmd_ = cmd; }  // 等待期间心跳维持这个命令
@@ -350,6 +355,8 @@ private:
     bool spearhead_active_{false};  // true from sendSpearheadCommand until DONE
     bool spearhead_done_pending_{false};  // DONE 到了但 FSM 还没处理, 跳过一次心跳
     uint8_t pending_spearhead_cmd_{0};
+    int spearhead_retry_count_{0};  // 当前 spearhead 指令已重发次数 (含首次)
+    bool spearhead_acked_{false};   // 收到对应 ACK 后置 true, 区分"未送达"和"执行中"
     uint8_t hold_cmd_{0};  // 等待期间心跳重发这个 zhuangtai 值 (保持夹爪状态)
     uint8_t last_spearhead_done_cmd_{0xFF};
     bool last_spearhead_done_success_{true};

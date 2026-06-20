@@ -26,11 +26,12 @@ void R2DecisionNode::onUpperDone(const robot_serial::msg::Juece::SharedPtr msg)
         return;
     }
 
-    // spearhead_active_ 在 sendSpearheadCommand 到 handleSpearheadDone 之间为 true
+    // spearhead_active_ 在 sendSpearheadCommand 到 handleSpearheadDone 之间为 true.
+    // handleSpearheadDone 严格校验 cmd 匹配: 迟到的上一条 DONE 会被丢弃, 不再误触发 ARM_DONE.
     if (actions_.hasPendingSpearhead())
     {
-        actions_.handleSpearheadDone(msg->status_bit, msg->is_finsh != 0);
-        postEvent(EventType::ARM_DONE, msg->is_finsh != 0, msg->status_bit);
+        if (actions_.handleSpearheadDone(msg->status_bit, msg->is_finsh != 0))
+            postEvent(EventType::ARM_DONE, msg->is_finsh != 0);
         return;
     }
 
