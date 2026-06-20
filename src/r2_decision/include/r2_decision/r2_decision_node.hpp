@@ -543,21 +543,15 @@ private:
     // callbacks (only update Context + post Event)
     void onUpperAck(const robot_serial::msg::Juece::SharedPtr msg);
     void onUpperDone(const robot_serial::msg::Juece::SharedPtr msg);
-    void onUpJuece(const robot_serial::msg::Juece::SharedPtr msg);
-    void onDownJuece(const robot_serial::msg::Juece::SharedPtr msg);
     void onSpearExists(const std_msgs::msg::Bool::SharedPtr msg);
     void onLightboardMap(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
     void onDt35Location(const robot_serial::msg::Location::SharedPtr msg);
-    void onArea(const robot_serial::msg::Juece::SharedPtr msg);
 
     // ROS2
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_ack_sub_;
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_done_sub_;
-    rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr up_juece_sub_;
-    rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr down_juece_sub_;
-    rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr area_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr spear_exists_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;

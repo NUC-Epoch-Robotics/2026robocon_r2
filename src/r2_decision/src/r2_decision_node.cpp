@@ -18,18 +18,6 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
         "/juece_done", 10,
         std::bind(&R2DecisionNode::onUpperDone, this, _1));
 
-    up_juece_sub_ = create_subscription<robot_serial::msg::Juece>(
-        "up_juece", rclcpp::SensorDataQoS(),
-        std::bind(&R2DecisionNode::onUpJuece, this, _1));
-
-    down_juece_sub_ = create_subscription<robot_serial::msg::Juece>(
-        "down_juece", rclcpp::SensorDataQoS(),
-        std::bind(&R2DecisionNode::onDownJuece, this, _1));
-
-    area_sub_ = create_subscription<robot_serial::msg::Juece>(
-        "juece/area", 10,
-        std::bind(&R2DecisionNode::onArea, this, _1));
-
     spear_exists_sub_ = create_subscription<std_msgs::msg::Bool>(
         "spearhead/exists", 10,
         std::bind(&R2DecisionNode::onSpearExists, this, _1));

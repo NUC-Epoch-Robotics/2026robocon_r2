@@ -2,14 +2,20 @@
 
 void R2DecisionNode::onUpperAck(const robot_serial::msg::Juece::SharedPtr msg)
 {
-    // zhuangtai==1 表示上位机应答, status_bit 携带指令值
-    if (msg->zhuangtai != 1) return;
+    // zhuangtai=1 → 吸到块
+    if (msg->zhuangtai == 1)
+    {
+        postEvent(EventType::UP_JUECE_DONE);
+        return;
+    }
 
-    // 根据当前等待的是 arm command 还是 spearhead command 分发
-    if (actions_.isWaitingSpearheadAck())
-        actions_.handleSpearheadAck(msg->status_bit);
-    else
-        actions_.handleAck(msg->status_bit);
+    // is_finsh=1 → 上台阶完成, is_finsh=2 → 下台阶完成
+    if (msg->is_finsh == 1 || msg->is_finsh == 2)
+    {
+        actions_.stopStair();
+        postEvent(EventType::DOWN_JUECE_DONE);
+        return;
+    }
 }
 
 void R2DecisionNode::onUpperDone(const robot_serial::msg::Juece::SharedPtr msg)
@@ -37,18 +43,6 @@ void R2DecisionNode::onUpperDone(const robot_serial::msg::Juece::SharedPtr msg)
 
     actions_.handleArmDone(msg->status_bit, msg->is_finsh != 0);
     postEvent(EventType::ARM_DONE, msg->is_finsh != 0, msg->status_bit);
-}
-
-void R2DecisionNode::onUpJuece(const robot_serial::msg::Juece::SharedPtr msg)
-{
-    if (msg->zhuangtai != 1 || ctx_.grab_context == GrabContext::NONE) return;
-    postEvent(EventType::UP_JUECE_DONE);
-}
-
-void R2DecisionNode::onDownJuece(const robot_serial::msg::Juece::SharedPtr msg)
-{
-    if (msg->zhuangtai != 1 || !actions_.isStairActive()) return;
-    postEvent(EventType::DOWN_JUECE_DONE);
 }
 
 void R2DecisionNode::onSpearExists(const std_msgs::msg::Bool::SharedPtr msg)
@@ -102,11 +96,3 @@ void R2DecisionNode::onDt35Location(const robot_serial::msg::Location::SharedPtr
     }
 }
 
-void R2DecisionNode::onArea(const robot_serial::msg::Juece::SharedPtr msg)
-{
-    if (msg->area != ctx_.area)
-    {
-        RCLCPP_INFO(get_logger(), "Area changed: %d -> %d", ctx_.area, msg->area);
-        ctx_.area = msg->area;
-    }
-}
