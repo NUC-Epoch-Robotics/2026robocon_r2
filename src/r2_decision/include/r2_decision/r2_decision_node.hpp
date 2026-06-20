@@ -347,6 +347,7 @@ private:
     // spearhead reliability
     bool waiting_spearhead_ack_{false};
     bool spearhead_active_{false};  // true from sendSpearheadCommand until DONE
+    bool spearhead_done_pending_{false};  // DONE 到了但 FSM 还没处理, 跳过一次心跳
     uint8_t pending_spearhead_cmd_{0};
     uint8_t last_spearhead_done_cmd_{0xFF};
     bool last_spearhead_done_success_{true};
