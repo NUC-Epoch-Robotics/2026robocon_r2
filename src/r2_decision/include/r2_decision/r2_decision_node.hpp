@@ -203,6 +203,7 @@ struct Context
     bool nav_chain_in_progress{false};
     double current_x{0.0};  // 上次导航目标x
     double current_y{0.0};  // 上次导航目标y
+    double current_yaw{0.0};  // 当前朝向 (旋转后更新)
 
     // ---- zone1 progress ----
     size_t zone1_index{0};

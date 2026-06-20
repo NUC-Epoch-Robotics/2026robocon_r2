@@ -417,10 +417,13 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_90_CW:
     {
-        // 顺时针转90度: yaw=0 → target=-90°
-        double target_yaw = -M_PI_2;
+        // 从当前朝向顺时针转90度
+        double target_yaw = ctx.current_yaw - M_PI_2;
+        while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
+        while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
         double qz = std::sin(target_yaw / 2.0);
         double qw = std::cos(target_yaw / 2.0);
+        ctx.current_yaw = target_yaw;
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f) target_yaw=%.3f",
                     ctx.current_x, ctx.current_y, target_yaw);
         act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, qz, qw, ctx);
@@ -469,10 +472,11 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_180:
     {
-        // 转180度: yaw=0 → target=180°
-        double target_yaw = M_PI;
+        // 从当前朝向转180度
+        double target_yaw = ctx.current_yaw + M_PI;
         while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
         while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
+        ctx.current_yaw = target_yaw;
         double qz = std::sin(target_yaw / 2.0);
         double qw = std::cos(target_yaw / 2.0);
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_180 at (%.2f, %.2f) target_yaw=%.3f",
