@@ -47,6 +47,13 @@ def generate_launch_description():
                     "min_s_color": 45,
                     "max_s_white": 35,
                     "min_color_ratio": 0.22,
+                    # ── D435i 曝光/白平衡 (自己调) ──
+                    # 灯板发光体宁欠勿过; 先关 AWB 固定白平衡, 再调曝光
+                    "auto_exposure": False,
+                    "exposure_us": 800,     # 手动曝光 us, 越大越亮 (1~10000), 过曝会把红绿判白
+                    "gain": -1,             # -1=不设, 否则 0~128
+                    "auto_white_balance": False,  # 关: 自动会乱改色温
+                    "white_balance": -1,    # -1=不设
                 }
             ],
         )
