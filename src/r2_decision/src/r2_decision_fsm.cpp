@@ -16,9 +16,9 @@
  *
  *   Zone1 新流程:
  *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(Nav2原地转90°)
- *     → NAV_POINT_Y(走Y) → OPERATE(is_finsh=1抓) → ROTATE_180(Nav2转180°)
- *     → DOCKING(is_finsh=2/3对接) → WAIT_5S(等5s) → is_finsh=0复位
- *     → FINISH → Zone2
+ *     → NAV_POINT_Y(走Y) → OPERATE(zhuangtai=1抓) → ROTATE_180(Nav2转180°)
+ *     → DOCKING(zhuangtai=2/3对接) → WAIT_5S(等5s) → DOCKING_DONE(zhuangtai=4)
+ *     → 等5s → zhuangtai=0 + area=2 → FINISH → Zone2
  *
  *   每个大状态内部用 sub_ 枚举做子状态切换:
  *     enterSub()  = 进入子状态时执行动作 (发导航、发机械臂指令、启台阶)
@@ -143,16 +143,18 @@ std::unique_ptr<TopState> WaitStartState::handleEvent(Context &ctx, ActionDispat
  *
  *   子状态流转:
  *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转90°)
- *     → NAV_POINT_Y(走Y) → OPERATE(is_finsh=1抓) → ROTATE_180(转180°)
- *     → DOCKING(is_finsh=2/3对接) → WAIT_5S(等5s) → is_finsh=0复位 → FINISH → Zone2
+ *     → NAV_POINT_Y(走Y) → OPERATE(zhuangtai=1抓) → ROTATE_180(转180°)
+ *     → DOCKING(zhuangtai=2/3对接) → WAIT_5S(等5s) → DOCKING_DONE(zhuangtai=4)
+ *     → 等5s → zhuangtai=0 + area=2 → FINISH → Zone2
  *
  *   NAV_POINT:    导航到矛头点x坐标 (y保持, 全局坐标系)
  *   ROTATE_90_CW: Nav2原地顺时针转90°
  *   NAV_POINT_Y:  导航到矛头点y坐标 (x已到位, 全局坐标系)
- *   OPERATE:      发 is_finsh=1 抓矛头
+ *   OPERATE:      发 zhuangtai=1 抓矛头
  *   ROTATE_180:   Nav2原地转180°
- *   DOCKING:      发 is_finsh=2/3 矛头对接
- *   WAIT_5S:      原地等待5秒, 然后发 is_finsh=0 复位
+ *   DOCKING:      发 zhuangtai=2/3 矛头对接
+ *   WAIT_5S:      原地等待5秒
+ *   DOCKING_DONE: 发 zhuangtai=4, 等5秒, 然后发 zhuangtai=0 + area=2 复位
  *   FINISH:       构建Zone2任务, 切换到Zone2
  * ============================================================================
  */
@@ -169,6 +171,7 @@ const char *Zone1State::name() const
     case Sub::ROTATE_180:     return "Zone1/Rotate180";
     case Sub::DOCKING:        return "Zone1/Docking";
     case Sub::WAIT_5S:        return "Zone1/Wait5s";
+    case Sub::DOCKING_DONE:   return "Zone1/DockingDone";
     case Sub::FINISH:         return "Zone1/Finish";
     }
     return "Zone1";
@@ -191,14 +194,27 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
 {
     checkTimeLimit(ctx, act);
 
-    // WAIT_5S: 计时5秒后发 is_finsh=0 复位, 然后进 FINISH
+    // WAIT_5S: 计时5秒后 → DOCKING_DONE (发 zhuangtai=4)
     if (sub_ == Sub::WAIT_5S)
     {
         auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
         if (elapsed > 5.0)
         {
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S done, send zhuangtai=0 reset");
-            act.publishCmdWithArea(0, 0, 0);  // zhuangtai=0 复位, 不等 ACK
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S done → DOCKING_DONE");
+            sub_ = Sub::DOCKING_DONE;
+            enterSub(ctx, act);
+        }
+    }
+
+    // DOCKING_DONE: 等5秒后发 zhuangtai=0 + area=2 复位, 进 FINISH
+    if (sub_ == Sub::DOCKING_DONE)
+    {
+        auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
+        if (elapsed > 5.0)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE done, send zhuangtai=0 area=2");
+            ctx.area = 2;
+            act.publishCmd(0, 0, 0, 2);  // zhuangtai=0 复位, area=2 切二区
             sub_ = Sub::FINISH;
             enterSub(ctx, act);
         }
@@ -380,7 +396,15 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     {
         ctx.wait_5s_start_time = rclcpp::Clock().now();
         act.stopCmdVel();
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S (5s后发is_finsh=0复位)");
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S (等5s后发zhuangtai=4)");
+        break;
+    }
+    case Sub::DOCKING_DONE:
+    {
+        // 发 zhuangtai=4
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE zhuangtai=4");
+        act.sendSpearheadCommand(4);
+        ctx.wait_5s_start_time = rclcpp::Clock().now();
         break;
     }
     case Sub::FINISH:
@@ -503,7 +527,15 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::WAIT_5S:
-        // WAIT_5S 由 onTick 计时驱动, 计时结束后发 is_finsh=0 复位
+        // WAIT_5S 由 onTick 计时驱动
+        break;
+
+    case Sub::DOCKING_DONE:
+        // zhuangtai=4 的 ARM_DONE, 清 spearhead_active_ 等 onTick 5s 到期
+        if (e.type == EventType::ARM_DONE)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE ack, wait 5s");
+        }
         break;
 
     case Sub::FINISH:
@@ -515,7 +547,7 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
 // 全局一区超时: 超过 zone1_max_time_s (默认120s) 发出 ZONE1_TIMEOUT 事件
 void Zone1State::checkTimeLimit(Context &ctx, ActionDispatcher &act)
 {
-    if (sub_ == Sub::WAIT_5S || sub_ == Sub::DOCKING || sub_ == Sub::FINISH || sub_ == Sub::EXTEND_SUCTION)
+    if (sub_ == Sub::WAIT_5S || sub_ == Sub::DOCKING || sub_ == Sub::DOCKING_DONE || sub_ == Sub::FINISH || sub_ == Sub::EXTEND_SUCTION)
         return; // 已经在收尾步骤了, 不打断
 
     auto elapsed = (rclcpp::Clock().now() - ctx.zone1_start_time).seconds();

@@ -439,10 +439,11 @@ private:
         NAV_POINT,          // 第一段: 变x (全局坐标系)
         ROTATE_90_CW,       // 顺时针转90度 (Nav2 navigate_to_pose)
         NAV_POINT_Y,        // 第二段: 变y (全局坐标系)
-        OPERATE,            // 抓矛头 (is_finsh=1)
+        OPERATE,            // 抓矛头 (zhuangtai=1)
         ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
-        DOCKING,            // 矛头对接 (is_finsh=2/3)
-        WAIT_5S,            // 等5秒, 然后发 is_finsh=0 复位
+        DOCKING,            // 矛头对接 (zhuangtai=2/3)
+        WAIT_5S,            // 等5秒
+        DOCKING_DONE,       // 发 zhuangtai=4, 等5秒
         FINISH,
     };
     Sub sub_{Sub::EXTEND_SUCTION};
