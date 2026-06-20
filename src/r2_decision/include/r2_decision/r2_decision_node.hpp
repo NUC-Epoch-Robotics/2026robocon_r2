@@ -162,6 +162,10 @@ struct Context
     uint8_t entry_block0_is_finsh{2};
     double entry_block2_x{3.0}, entry_block2_y{1.41};
     uint8_t entry_block2_is_finsh{1};
+    // 入口第一次上台阶点 (1.8,1.41): 抓完倒回后走到这里上台阶. 二区唯一上台阶点
+    double entry_stair1_x{1.8}, entry_stair1_y{1.41};
+    // 入口转向点 x=3.0 (y 用 entry_block2_y): 上台阶#1后走到这里顺时针转90°
+    double entry_rotate_x{3.0};
     bool sim_mode{false};
 
     // ---- sensor mirror ----
@@ -232,6 +236,8 @@ struct Context
     int zone2_arm_retry{0};
     bool zone2_stair_pending{false};  // true = 等台阶完成后再旋转
     int entry_grab_step{0};
+    bool entry_sucked{false};  // 入口: 当前块已吸上 (UP_JUECE_DONE 到达)
+    bool entry_arrived{false}; // 入口: 当前块已导航到达 block 位 (NAV_DONE)
     int zone2_grab_step{0};
     int zone2_point0_substep{0};
     bool zone2_point0_sequence_active{false};
@@ -493,6 +499,7 @@ private:
     void enterSub(Context &ctx, ActionDispatcher &act);
     std::unique_ptr<TopState> handleSubEvent(Context &ctx, ActionDispatcher &act, const Event &e);
     void tickEntryGrab(Context &ctx, ActionDispatcher &act);
+    void tryEntryRetreat(Context &ctx, ActionDispatcher &act);
     void tickGrab(Context &ctx, ActionDispatcher &act);
     void handlePoint0Substep(Context &ctx, ActionDispatcher &act);
     void checkSceneTimeout(Context &ctx, ActionDispatcher &act);

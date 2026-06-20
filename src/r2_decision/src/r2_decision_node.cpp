@@ -215,6 +215,9 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     ctx_.entry_block2_x = declare_parameter<double>("entry_block2_x", 3.0);
     ctx_.entry_block2_y = declare_parameter<double>("entry_block2_y", 1.41);
     ctx_.entry_block2_is_finsh = static_cast<uint8_t>(declare_parameter<int>("entry_block2_is_finsh", 1));
+    ctx_.entry_stair1_x = declare_parameter<double>("entry_stair1_x", 1.8);
+    ctx_.entry_stair1_y = declare_parameter<double>("entry_stair1_y", 1.41);
+    ctx_.entry_rotate_x = declare_parameter<double>("entry_rotate_x", 3.0);
 
     // Sim mode
     ctx_.sim_mode = declare_parameter<bool>("sim_mode", false);
