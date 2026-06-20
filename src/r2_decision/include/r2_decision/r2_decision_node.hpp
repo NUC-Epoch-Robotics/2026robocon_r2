@@ -296,6 +296,7 @@ public:
 
     // --- low-level publish ---
     void publishCmd(uint8_t status_bit, uint8_t is_finsh = 0, uint8_t zhuangtai = 0, uint8_t area = 0);
+    void publishCmdWithArea(uint8_t status_bit, uint8_t is_finsh = 0, uint8_t zhuangtai = 0);
 
     // --- cmd_vel (odometry fine-tune) ---
     void publishCmdVel(double linear_x, double linear_y, double angular_z = 0.0);
@@ -352,6 +353,7 @@ private:
     rclcpp::Time spearhead_cmd_start_time_{0, 0, RCL_ROS_TIME};
 
     rclcpp::Time last_idle_heartbeat_time_{0, 0, RCL_ROS_TIME};
+    uint8_t area_{0};  // 当前区号, 所有命令都带上
 
     // camera state
     bool spear_camera_enabled_{false};

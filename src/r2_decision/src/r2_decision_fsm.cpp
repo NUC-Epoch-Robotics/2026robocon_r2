@@ -197,8 +197,8 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
         if (elapsed > 5.0)
         {
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S done, send is_finsh=0 reset");
-            act.publishCmd(0, 0, 0);  // is_finsh=0 复位, 不等 ACK
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: WAIT_5S done, send zhuangtai=0 reset");
+            act.publishCmdWithArea(0, 0, 0);  // zhuangtai=0 复位, 不等 ACK
             sub_ = Sub::FINISH;
             enterSub(ctx, act);
         }

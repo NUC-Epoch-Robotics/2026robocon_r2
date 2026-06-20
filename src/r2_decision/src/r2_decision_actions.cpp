@@ -84,7 +84,7 @@ void ActionDispatcher::sendNavigateWithQuat(double x, double y, double z,
 void ActionDispatcher::sendArmCommand(uint8_t cmd)
 {
     if (cmd != 0)
-        publishCmd(0); // brief idle before command
+        publishCmdWithArea(0); // brief idle before command
 
     pending_upper_cmd_ = cmd;
     waiting_upper_ack_ = true;
@@ -93,7 +93,7 @@ void ActionDispatcher::sendArmCommand(uint8_t cmd)
     upper_cmd_start_time_ = now_time;
     last_upper_send_time_ = now_time;
 
-    publishCmd(cmd);
+    publishCmdWithArea(cmd);
     RCLCPP_INFO(rclcpp::get_logger("actions"), "ARM cmd=%d (waiting ACK...)", cmd);
 }
 
@@ -137,7 +137,7 @@ void ActionDispatcher::sendSpearheadCommand(uint8_t cmd)
     spearhead_cmd_start_time_ = now_time;
     last_spearhead_send_time_ = now_time;
 
-    publishCmd(0, 0, cmd);  // status_bit=0, is_finsh=0, zhuangtai=cmd
+    publishCmdWithArea(0, 0, cmd);  // status_bit=0, is_finsh=0, zhuangtai=cmd
     RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD cmd zhuangtai=%d (waiting ACK...)", cmd);
 }
 
@@ -174,8 +174,8 @@ void ActionDispatcher::handleSpearheadDone(uint8_t command, bool success)
 
 void ActionDispatcher::tick(Context &ctx)
 {
+    area_ = ctx.area;
     tickReliability();
-    (void)ctx;
 }
 
 void ActionDispatcher::tickReliability()
@@ -187,7 +187,7 @@ void ActionDispatcher::tickReliability()
     {
         if ((now_time - last_spearhead_send_time_).nanoseconds() >= kUpperCommandResendPeriodMs * 1'000'000)
         {
-            publishCmd(0, 0, pending_spearhead_cmd_);
+            publishCmdWithArea(0, 0, pending_spearhead_cmd_);
             last_spearhead_send_time_ = now_time;
         }
         if ((now_time - spearhead_cmd_start_time_).nanoseconds() >= kUpperCommandTimeoutMs * 1'000'000)
@@ -202,7 +202,7 @@ void ActionDispatcher::tickReliability()
     {
         if ((now_time - last_upper_send_time_).nanoseconds() >= kUpperCommandResendPeriodMs * 1'000'000)
         {
-            publishCmd(pending_upper_cmd_);
+            publishCmdWithArea(pending_upper_cmd_);
             last_upper_send_time_ = now_time;
         }
         if ((now_time - upper_cmd_start_time_).nanoseconds() >= kUpperCommandTimeoutMs * 1'000'000)
@@ -245,12 +245,12 @@ void ActionDispatcher::tickStair()
 {
     if (stair_phase_ == 0)
     {
-        publishCmd(0);
+        publishCmdWithArea(0);
         stair_phase_ = 1;
     }
     else
     {
-        publishCmd(stair_target_cmd_);
+        publishCmdWithArea(stair_target_cmd_);
     }
 }
 
@@ -261,7 +261,7 @@ void ActionDispatcher::stopStair()
         stair_timer_->cancel();
         stair_timer_.reset();
     }
-    publishCmd(0);
+    publishCmdWithArea(0);
 }
 
 // ==========================================================================
@@ -280,7 +280,7 @@ void ActionDispatcher::startEntryGrab(uint8_t is_finsh, Context &ctx)
 
 void ActionDispatcher::tickEntryGrab()
 {
-    publishCmd(0, entry_grab_is_finsh_);
+    publishCmdWithArea(0, entry_grab_is_finsh_);
 }
 
 void ActionDispatcher::stopEntryGrab()
@@ -290,7 +290,7 @@ void ActionDispatcher::stopEntryGrab()
         entry_grab_timer_->cancel();
         entry_grab_timer_.reset();
     }
-    publishCmd(0, 0);
+    publishCmdWithArea(0, 0);
 }
 
 // ==========================================================================
@@ -309,7 +309,7 @@ void ActionDispatcher::startZone2Grab(uint8_t is_finsh, Context &ctx)
 
 void ActionDispatcher::tickZone2Grab()
 {
-    publishCmd(0, zone2_grab_is_finsh_);
+    publishCmdWithArea(0, zone2_grab_is_finsh_);
 }
 
 void ActionDispatcher::stopZone2Grab()
@@ -319,7 +319,7 @@ void ActionDispatcher::stopZone2Grab()
         zone2_grab_timer_->cancel();
         zone2_grab_timer_.reset();
     }
-    publishCmd(0, 0);
+    publishCmdWithArea(0, 0);
 }
 
 // ==========================================================================
@@ -375,6 +375,12 @@ void ActionDispatcher::publishCmd(uint8_t status_bit, uint8_t is_finsh, uint8_t 
     msg.status_bit = status_bit;
     msg.area = area;
     upper_cmd_pub_->publish(msg);
+}
+
+// 自动带 area_ 的版本
+void ActionDispatcher::publishCmdWithArea(uint8_t status_bit, uint8_t is_finsh, uint8_t zhuangtai)
+{
+    publishCmd(status_bit, is_finsh, zhuangtai, area_);
 }
 
 // ==========================================================================
