@@ -99,11 +99,18 @@ void ActionDispatcher::sendArmCommand(uint8_t cmd)
 
 void ActionDispatcher::handleAck(uint8_t command)
 {
-    if (!waiting_upper_ack_ || command != pending_upper_cmd_)
+    // 未在等待 ACK 时到达的 ACK, 通常是 hold 心跳重发带回的回声, 静默丢弃不刷屏.
+    if (!waiting_upper_ack_)
     {
         if (command != pending_upper_cmd_)
-            RCLCPP_WARN(rclcpp::get_logger("actions"), "Ignore ACK for cmd %d, waiting %d",
-                        command, pending_upper_cmd_);
+            RCLCPP_DEBUG(rclcpp::get_logger("actions"),
+                         "Ignore ACK for cmd %d, not waiting", command);
+        return;
+    }
+    if (command != pending_upper_cmd_)
+    {
+        RCLCPP_WARN(rclcpp::get_logger("actions"), "Ignore ACK for cmd %d, waiting %d",
+                    command, pending_upper_cmd_);
         return;
     }
     waiting_upper_ack_ = false;

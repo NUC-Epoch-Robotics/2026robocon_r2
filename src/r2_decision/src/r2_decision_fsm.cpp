@@ -206,9 +206,10 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         }
     }
 
-    // DOCKING_DONE: zhuangtai=4 →(等 DONE)→ 等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2 → FINISH
+    // DOCKING_DONE: zhuangtai=4 →(等 DONE)→ 等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2 (收回夹爪) → 等5s → FINISH → Zone2
     //   step0 的计时起点 = 收到 zhuangtai=4 的 ARM_DONE 那一刻 (handleSubEvent 里设, 见下).
     //   还在等 zhuangtai=4 DONE 时 (zone1_dock4_wait_done) 不计时.
+    //   step2 (发 area=2 后) 再等 5s, 给下位机执行"收回夹爪"的时间, 再进二区.
     if (sub_ == Sub::DOCKING_DONE && !ctx.zone1_dock4_wait_done)
     {
         auto elapsed = (rclcpp::Clock().now() - ctx.wait_5s_start_time).seconds();
@@ -223,10 +224,18 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         }
         else if (ctx.zone1_dock_step == 1 && elapsed > 5.0)
         {
-            // 5s 到了, 发 zhuangtai=0 area=2 切二区
+            // 5s 到了, 发 zhuangtai=0 area=2 (area=2 时 zhuangtai=0 = 收回夹爪)
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → zhuangtai=0 area=2");
             ctx.area = 2;
+            act.setHoldCmd(0);  // 清 hold, 让心跳维持 zhuangtai=0 area=2 (持续收回状态)
             act.publishCmd(0, 0, 0, 2);  // zhuangtai=0, area=2
+            ctx.wait_5s_start_time = rclcpp::Clock().now();
+            ctx.zone1_dock_step = 2;  // 再等 5s 让下位机执行收回, 再进二区
+        }
+        else if (ctx.zone1_dock_step == 2 && elapsed > 5.0)
+        {
+            // 收回夹爪的 5s 到了, 进二区
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → 收回完成, 进二区");
             sub_ = Sub::FINISH;
             enterSub(ctx, act);
         }
