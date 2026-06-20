@@ -137,8 +137,8 @@ void ActionDispatcher::sendSpearheadCommand(uint8_t cmd)
     spearhead_cmd_start_time_ = now_time;
     last_spearhead_send_time_ = now_time;
 
-    publishCmd(0, cmd, 0);  // status_bit=0, is_finsh=cmd, zhuangtai=0
-    RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD cmd is_finsh=%d (waiting ACK...)", cmd);
+    publishCmd(0, 0, cmd);  // status_bit=0, is_finsh=0, zhuangtai=cmd
+    RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD cmd zhuangtai=%d (waiting ACK...)", cmd);
 }
 
 void ActionDispatcher::handleSpearheadAck(uint8_t command)

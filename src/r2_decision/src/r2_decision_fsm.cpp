@@ -325,13 +325,19 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::OPERATE:
     {
-        // 导航到了矛头点, 发 is_finsh=1 开始抓
+        // 导航到了矛头点, 发 zhuangtai=1 开始抓
         const int pid = ctx.zone1_route_ids[ctx.zone1_index];
         auto it = ctx.point_table.find(pid);
-        const auto &t = it->second;
+        if (it == ctx.point_table.end())
+        {
+            RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: OPERATE missing point %d, skip", pid);
+            sub_ = Sub::ROTATE_180;
+            enterSub(ctx, act);
+            return;
+        }
         ctx.zone1_arm_retry = 0;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1 point %d: GRAB is_finsh=1 (docking_cmd=%d)", pid, t.docking_cmd);
-        act.sendSpearheadCommand(1);  // is_finsh=1: 开始抓
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1 point %d: GRAB zhuangtai=1 (docking_cmd=%d)", pid, it->second.docking_cmd);
+        act.sendSpearheadCommand(1);  // zhuangtai=1: 开始抓
         break;
     }
     case Sub::ROTATE_180:
@@ -350,12 +356,19 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::DOCKING:
     {
-        // 转180°完成, 发矛头对接指令 (is_finsh=2 或 3)
-        const int pid = ctx.zone1_route_ids[ctx.zone1_index];
+        // 转180°完成, 发矛头对接指令 (zhuangtai=2 或 3)
+        // zone1_index 已经在 OPERATE 完成时 +1 了, 这里用 index-1 拿刚抓的矛头
+        const int pid = ctx.zone1_route_ids[ctx.zone1_index - 1];
         auto it = ctx.point_table.find(pid);
-        const auto &t = it->second;
-        uint8_t cmd = t.docking_cmd;
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING is_finsh=%d (point %d)", cmd, pid);
+        if (it == ctx.point_table.end())
+        {
+            RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone1: DOCKING missing point %d, skip", pid);
+            sub_ = Sub::WAIT_5S;
+            enterSub(ctx, act);
+            return;
+        }
+        uint8_t cmd = it->second.docking_cmd;
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING zhuangtai=%d (point %d)", cmd, pid);
         act.sendSpearheadCommand(cmd);
         break;
     }
