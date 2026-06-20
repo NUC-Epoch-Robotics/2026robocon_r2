@@ -295,7 +295,7 @@ public:
     void enableGrabScene(bool enable, uint8_t expected_scene = 0);
 
     // --- low-level publish ---
-    void publishCmd(uint8_t status_bit, uint8_t is_finsh = 0, uint8_t zhuangtai = 0);
+    void publishCmd(uint8_t status_bit, uint8_t is_finsh = 0, uint8_t zhuangtai = 0, uint8_t area = 0);
 
     // --- cmd_vel (odometry fine-tune) ---
     void publishCmdVel(double linear_x, double linear_y, double angular_z = 0.0);

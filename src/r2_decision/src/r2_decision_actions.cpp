@@ -175,7 +175,7 @@ void ActionDispatcher::handleSpearheadDone(uint8_t command, bool success)
 void ActionDispatcher::tick(Context &ctx)
 {
     tickReliability();
-    (void)ctx; // stair/grab timers are self-driven via wall_timer callbacks
+    (void)ctx;
 }
 
 void ActionDispatcher::tickReliability()
@@ -367,12 +367,13 @@ void ActionDispatcher::enableGrabScene(bool enable, uint8_t expected_scene)
 // Low-level publish
 // ==========================================================================
 
-void ActionDispatcher::publishCmd(uint8_t status_bit, uint8_t is_finsh, uint8_t zhuangtai)
+void ActionDispatcher::publishCmd(uint8_t status_bit, uint8_t is_finsh, uint8_t zhuangtai, uint8_t area)
 {
     robot_serial::msg::Juece msg;
     msg.zhuangtai = zhuangtai;
     msg.is_finsh = is_finsh;
     msg.status_bit = status_bit;
+    msg.area = area;
     upper_cmd_pub_->publish(msg);
 }
 

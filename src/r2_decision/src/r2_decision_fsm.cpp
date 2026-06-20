@@ -119,9 +119,13 @@ std::unique_ptr<TopState> WaitStartState::onEnter(Context &ctx, ActionDispatcher
 
 std::unique_ptr<TopState> WaitStartState::handleEvent(Context &ctx, ActionDispatcher &act, const Event &e)
 {
-    (void)act;
     if (e.type == EventType::START_PRESSED)
     {
+        // 发一次 area=1, 告诉串口我们进入一区
+        ctx.area = 1;
+        act.publishCmd(0, 0, 0, 1);  // status_bit=0, is_finsh=0, zhuangtai=0, area=1
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "START pressed, area=1 sent");
+
         // 重置 Zone1 进度, 记录开始时间 (用于超时)
         ctx.zone1_index = 0;
         ctx.dock_success_count = 0;
