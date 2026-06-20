@@ -51,6 +51,7 @@ class LightboardDetectorNode(Node):
         self.declare_parameter("stable_frames_required", 3)
         self.declare_parameter("flip_horizontal", False)
         self.declare_parameter("start_enabled", True)
+        self.declare_parameter("show_debug", False)  # 显示调试窗口: 网格+采样框+分类颜色
 
         self.camera_index = int(self.get_parameter("camera_index").value)
         self.fps = float(self.get_parameter("fps").value)
@@ -71,6 +72,7 @@ class LightboardDetectorNode(Node):
         self.stable_frames_required = int(self.get_parameter("stable_frames_required").value)
         self.flip_horizontal = bool(self.get_parameter("flip_horizontal").value)
         self.enabled = bool(self.get_parameter("start_enabled").value)
+        self.show_debug = bool(self.get_parameter("show_debug").value)
 
         self.rows = max(1, self.rows)
         self.cols = max(1, self.cols)
@@ -136,6 +138,9 @@ class LightboardDetectorNode(Node):
         current_map = self._classify_grid(crop)
         self._publish_raw_map(current_map)
 
+        if self.show_debug:
+            self._show_debug(crop, current_map)
+
         key = tuple(current_map)
         self.history.append(key)
 
@@ -183,6 +188,53 @@ class LightboardDetectorNode(Node):
                 output.append(state)
 
         return output
+
+    def _show_debug(self, crop: np.ndarray, current_map: List[int]) -> None:
+        """Draw grid + sample box + classification label on crop and imshow."""
+        # 分类配色: R1=红, R2=绿, FAKE=蓝, EMPTY=灰
+        label_color = {
+            self.EMPTY: (128, 128, 128),
+            self.R1: (0, 0, 255),      # BGR red
+            self.R2: (0, 255, 0),      # BGR green
+            self.FAKE: (255, 0, 0),    # BGR blue
+        }
+        label_text = {self.EMPTY: "E", self.R1: "R1", self.R2: "R2", self.FAKE: "F"}
+
+        vis = crop.copy()
+        ch, cw = crop.shape[:2]
+
+        for r in range(self.rows):
+            y0 = int(r * ch / self.rows)
+            y1 = int((r + 1) * ch / self.rows)
+            for c in range(self.cols):
+                x0 = int(c * cw / self.cols)
+                x1 = int((c + 1) * cw / self.cols)
+
+                state = current_map[r * self.cols + c]
+                color = label_color[state]
+
+                # 格子边框 (按分类上色)
+                cv2.rectangle(vis, (x0, y0), (x1 - 1, y1 - 1), color, 2)
+
+                # 采样框 (白虚线感: 直接画实线细框)
+                sx0, sy0, sx1, sy1 = self._sample_box(x0, y0, x1, y1)
+                cv2.rectangle(vis, (sx0, sy0), (sx1 - 1, sy1 - 1), (255, 255, 255), 1)
+
+                # 分类标签
+                cv2.putText(vis, label_text[state], (x0 + 4, y0 + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+        # 整体外框 + 稳定标志
+        _, stable = self._get_stable_map()
+        cv2.rectangle(vis, (0, 0), (cw - 1, ch - 1), (255, 255, 255), 1)
+        cv2.putText(vis, f"stable={stable}", (4, ch - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        try:
+            cv2.imshow("lightboard_debug", vis)
+            cv2.waitKey(1)
+        except Exception:
+            pass
 
     def _sample_box(self, x0: int, y0: int, x1: int, y1: int) -> Tuple[int, int, int, int]:
         w = x1 - x0
