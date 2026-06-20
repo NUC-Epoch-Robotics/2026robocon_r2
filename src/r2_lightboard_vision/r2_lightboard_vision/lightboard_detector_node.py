@@ -3,6 +3,7 @@ from typing import Deque, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import pyrealsense2 as rs
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, UInt8MultiArray, MultiArrayDimension
@@ -32,7 +33,8 @@ class LightboardDetectorNode(Node):
     def __init__(self) -> None:
         super().__init__("lightboard_detector")
 
-        self.declare_parameter("camera_index", 0)
+        self.declare_parameter("camera_index", 0)  # 兼容保留: D435i 无 V4L 节点, 实际用 pyrealsense2
+        self.declare_parameter("serial_number", "")  # 可选: 指定 D435i 序列号, 空=第一台
         self.declare_parameter("fps", 15.0)
         self.declare_parameter("frame_width", 640)
         self.declare_parameter("frame_height", 480)
@@ -54,6 +56,7 @@ class LightboardDetectorNode(Node):
         self.declare_parameter("show_debug", False)  # 显示调试窗口: 网格+采样框+分类颜色
 
         self.camera_index = int(self.get_parameter("camera_index").value)
+        self.serial_number = str(self.get_parameter("serial_number").value).strip()
         self.fps = float(self.get_parameter("fps").value)
         self.frame_width = int(self.get_parameter("frame_width").value)
         self.frame_height = int(self.get_parameter("frame_height").value)
@@ -90,7 +93,8 @@ class LightboardDetectorNode(Node):
 
         self.history: Deque[Tuple[int, ...]] = deque(maxlen=self.history_size)
         self.last_stable_map: Optional[Tuple[int, ...]] = None
-        self.cap: Optional[cv2.VideoCapture] = None
+        self.pipeline: Optional[rs.pipeline] = None
+        self.pipeline_started: bool = False
         self.last_open_failed: bool = False
 
         if self.enabled:
@@ -123,9 +127,19 @@ class LightboardDetectorNode(Node):
         if not self._ensure_camera_open():
             return
 
-        assert self.cap is not None
-        ok, frame = self.cap.read()
-        if not ok or frame is None:
+        assert self.pipeline is not None
+        try:
+            frames = self.pipeline.wait_for_frames(timeout_ms=200)
+        except Exception:
+            return
+        if not frames:
+            return
+
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            return
+        frame = np.asanyarray(color_frame.get_data())
+        if frame is None or frame.size == 0:
             return
 
         if self.flip_horizontal:
@@ -334,26 +348,45 @@ class LightboardDetectorNode(Node):
         return best_map, stable
 
     def _ensure_camera_open(self) -> bool:
-        if self.cap is not None and self.cap.isOpened():
+        if self.pipeline_started and self.pipeline is not None:
             return True
-        self.cap = cv2.VideoCapture(self.camera_index)
-        if not self.cap.isOpened():
+
+        try:
+            cfg = rs.config()
+            if self.serial_number:
+                cfg.enable_device(self.serial_number)
+            # D435i color 流: bgr8 与 cv2 兼容. 支持分辨率 640x480 / 1280x720 等
+            cfg.enable_stream(
+                rs.stream.color, self.frame_width, self.frame_height,
+                rs.format.bgr8, int(self.fps),
+            )
+            self.pipeline = rs.pipeline()
+            self.pipeline.start(cfg)
+            self.pipeline_started = True
+            self.last_open_failed = False
+            self.get_logger().info(
+                f"realsense color stream {self.frame_width}x{self.frame_height}@{int(self.fps)} started"
+            )
+            return True
+        except Exception as e:
             if not self.last_open_failed:
                 self.get_logger().error(
-                    f"Failed to open camera index {self.camera_index}"
+                    f"Failed to start realsense pipeline {self.frame_width}x{self.frame_height}@{int(self.fps)}: {e}. "
+                    f"D435i supports 640x480/1280x720@6/15/30; try changing frame_width/height/fps."
                 )
             self.last_open_failed = True
+            self.pipeline = None
+            self.pipeline_started = False
             return False
-        self.last_open_failed = False
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-        self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-        return True
 
     def _release_camera(self) -> None:
-        if self.cap is not None and self.cap.isOpened():
-            self.cap.release()
-        self.cap = None
+        if self.pipeline_started and self.pipeline is not None:
+            try:
+                self.pipeline.stop()
+            except Exception:
+                pass
+        self.pipeline = None
+        self.pipeline_started = False
 
     def destroy_node(self) -> bool:
         self._release_camera()

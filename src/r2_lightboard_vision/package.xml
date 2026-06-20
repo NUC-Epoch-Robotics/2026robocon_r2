@@ -13,6 +13,8 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <!-- pyrealsense2: pip 安装到 user site-packages, 用于 D435i 取流 (无 V4L 节点) -->
+  <exec_depend>python3-pyrealsense2</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

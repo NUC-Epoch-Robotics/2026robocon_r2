@@ -6,18 +6,19 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     show_debug = LaunchConfiguration("show_debug")
-    camera_index = LaunchConfiguration("camera_index")
+    serial_number = LaunchConfiguration("serial_number")
 
     return LaunchDescription([
         DeclareLaunchArgument(
             "show_debug",
             default_value="true",
             description="显示调试窗口: 网格+采样框+分类颜色 (需有显示器/X11)"),
-        # D435i 相机 id 硬编码在此: 改下面 default_value 即可
+        # D435i 序列号: 多相机时指定用哪台, 空=用第一台 (单相机留空)
+        # 查序列号: rs-enumerate-devices --compact
         DeclareLaunchArgument(
-            "camera_index",
-            default_value="0",
-            description="相机设备索引 (D435i 彩色流), 0/2/4 等"),
+            "serial_number",
+            default_value="",
+            description="D435i 序列号, 空=第一台 (D435i 无 V4L 节点, 用 pyrealsense2 取流)"),
         Node(
             package="r2_lightboard_vision",
             executable="lightboard_detector",
@@ -28,11 +29,11 @@ def generate_launch_description():
                     # 灯板竖放: 长边4(行) × 短边3(列) = 12格, 与 zone2_planner 布局一致
                     "rows": 4,
                     "cols": 3,
+                    # D435i color 流: 640x480@30 最稳; 1280x720@30 多数支持; 不行就回退 640x480
                     "fps": 30.0,
                     "frame_width": 1280,
                     "frame_height": 720,
-                    # 相机 id (来自上面的 launch arg)
-                    "camera_index": camera_index,
+                    "serial_number": serial_number,
                     # 离线标定直接出图 (整机启动时此文件不用, 决策侧用 start_enabled:=False 自控)
                     "start_enabled": True,
                     "show_debug": show_debug,
