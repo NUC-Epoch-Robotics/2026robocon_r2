@@ -952,7 +952,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_grab_step += 1;
             tickEntryGrab(ctx, act);
         }
-        // step1/4: 到达块位 → 标记 arrived, 若已吸上则倒回, 否则等 UP_JUECE
+        // step1/4: 到达块位 → 标记 arrived, 若已吸上则后退
         else if (e.type == EventType::NAV_DONE && (ctx.entry_grab_step == 1 || ctx.entry_grab_step == 4))
         {
             if (!e.success)
@@ -972,7 +972,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_grab_step += 1;
             tickEntryGrab(ctx, act);
         }
-        // step2/5: 吸上 → 标记 sucked, 若已到达则倒回
+        // step2/5: 吸上 → 若已到达则倒回
         else if (e.type == EventType::UP_JUECE_DONE && (ctx.entry_grab_step == 2 || ctx.entry_grab_step == 5))
         {
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块吸上 (step=%d)", ctx.entry_grab_step);
@@ -1305,32 +1305,30 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(ctx.entry_approach_x, ctx.entry_block0_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 1:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 1: is_finsh=2 + nav→块1 (%.2f,%.2f)",
-                    ctx.entry_block0_x, ctx.entry_block0_y);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 1: is_finsh=%d + nav→块1 (%.2f,%.2f)",
+                    ctx.entry_block0_is_finsh, ctx.entry_block0_x, ctx.entry_block0_y);
         ctx.entry_sucked = false;
         ctx.entry_arrived = false;
-        act.startZone2Grab(ctx.entry_block0_is_finsh, ctx);  // is_finsh=2 持续重发, 边走边吸
+        act.startZone2Grab(ctx.entry_block0_is_finsh, ctx);  // 在approach就开始吸
         act.sendNavigateWithQuat(ctx.entry_block0_x, ctx.entry_block0_y, 0, 0, 0, 0, 1, ctx);
-        // step 由 NAV_DONE handler 推进到 2
         break;
     case 2:
-        // 由 handleSubEvent: 到达(NAV_DONE)后若 entry_sucked 则发倒回 nav 并进 step3
+        // 等吸上: NAV_DONE 到达 → arrived, UP_JUECE → sucked, 两个都满足就后退
         break;
     // ── 块2 (col1, y=1.41, is_finsh=1) ──
     case 3:
         // 倒回 nav 已发 (tryEntryRetreat), 等倒回到位 NAV_DONE (见 handleSubEvent)
         break;
     case 4:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 4: is_finsh=1 + nav→块2 (%.2f,%.2f)",
-                    ctx.entry_block2_x, ctx.entry_block2_y);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 4: is_finsh=%d + nav→块2 (%.2f,%.2f)",
+                    ctx.entry_block2_is_finsh, ctx.entry_block2_x, ctx.entry_block2_y);
         ctx.entry_sucked = false;
         ctx.entry_arrived = false;
-        act.startZone2Grab(ctx.entry_block2_is_finsh, ctx);  // is_finsh=1
+        act.startZone2Grab(ctx.entry_block2_is_finsh, ctx);  // 在approach就开始吸
         act.sendNavigateWithQuat(ctx.entry_block2_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
-        // step 由 NAV_DONE handler 推进到 5
         break;
     case 5:
-        // 到达后等 UP_JUECE 吸上, 见 handleSubEvent
+        // 等吸上: NAV_DONE 到达 → arrived, UP_JUECE → sucked, 两个都满足就后退
         break;
     case 6:
         // 倒回 nav 已发, 等倒回到位 NAV_DONE
