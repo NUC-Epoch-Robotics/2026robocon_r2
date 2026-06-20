@@ -114,3 +114,12 @@ void R2DecisionNode::onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg)
                     ctx_.odom_x, ctx_.odom_y, ctx_.odom_yaw);
     }
 }
+
+void R2DecisionNode::onArea(const robot_serial::msg::Juece::SharedPtr msg)
+{
+    if (msg->area != ctx_.area)
+    {
+        RCLCPP_INFO(get_logger(), "Area changed: %d -> %d", ctx_.area, msg->area);
+        ctx_.area = msg->area;
+    }
+}

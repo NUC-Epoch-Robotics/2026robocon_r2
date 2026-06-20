@@ -85,6 +85,7 @@ struct WaypointTask
     uint8_t arm_command{0};
     bool skip_dock{false};
     bool use_spearhead{false};  // true → sendSpearheadCommand, false → sendArmCommand
+    uint8_t docking_cmd{0};    // 矛头对接指令: 2=五号矛头, 3=四号矛头, 0=无
 };
 
 struct Zone2Task
@@ -162,6 +163,7 @@ struct Context
     // ---- sensor mirror ----
     bool spearhead_exists{false};
     bool lightboard_map_received{false};
+    uint8_t area{0};  // 串口发的区号: 0=无状态, 1=一区, 2=二区, 3=三区
 
     // ---- odometry mirror (from /odin1/odometry) ----
     double odom_x{0.0};
@@ -435,11 +437,10 @@ private:
         NAV_POINT,          // 第一段: 变x (全局坐标系)
         ROTATE_90_CW,       // 顺时针转90度 (Nav2 navigate_to_pose)
         NAV_POINT_Y,        // 第二段: 变y (全局坐标系)
-        OPERATE,            // 抓矛头
+        OPERATE,            // 抓矛头 (is_finsh=1)
         ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
-        MOVE_Y_PLUS_50,     // y+0.5m (全局坐标系)
-        WAIT_5S,            // 等5秒
-        ROTATE_BACK,        // 顺时针转90°回来 (恢复0°朝向)
+        DOCKING,            // 矛头对接 (is_finsh=2/3)
+        WAIT_5S,            // 等5秒, 然后发 is_finsh=0 复位
         FINISH,
     };
     Sub sub_{Sub::EXTEND_SUCTION};
@@ -525,12 +526,14 @@ private:
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
     void onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void onArea(const robot_serial::msg::Juece::SharedPtr msg);
 
     // ROS2
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_ack_sub_;
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr upper_done_sub_;
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr up_juece_sub_;
     rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr down_juece_sub_;
+    rclcpp::Subscription<robot_serial::msg::Juece>::SharedPtr area_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr spear_exists_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;

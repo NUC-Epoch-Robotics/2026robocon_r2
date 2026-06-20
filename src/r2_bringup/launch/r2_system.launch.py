@@ -69,8 +69,8 @@ def generate_launch_description():
                 'fine_tune_speed_x': 0.05,
                 'fine_tune_speed_y': 0.05,
                 'fine_tune_speed_yaw': 0.2,
-                # 矛头基准点 (2号矛头), 间距200mm
-                'spearhead_base_x': -0.150,
+                # 矛头基准点 (1号矛头), 间距200mm
+                'spearhead_base_x': -0.198,
                 'spearhead_base_y': -0.659,
                 'spearhead_base_z': -0.622,
                 'spearhead_spacing': 0.2,

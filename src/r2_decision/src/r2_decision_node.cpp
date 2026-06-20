@@ -26,6 +26,10 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
         "down_juece", rclcpp::SensorDataQoS(),
         std::bind(&R2DecisionNode::onDownJuece, this, _1));
 
+    area_sub_ = create_subscription<robot_serial::msg::Juece>(
+        "juece/area", 10,
+        std::bind(&R2DecisionNode::onArea, this, _1));
+
     spear_exists_sub_ = create_subscription<std_msgs::msg::Bool>(
         "spearhead/exists", 10,
         std::bind(&R2DecisionNode::onSpearExists, this, _1));
@@ -75,11 +79,14 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
                                ctx_.zone1_arm_command,
                                false};
     }
-    // 点5 走抓矛头流程 (起点为2号矛头时, 抓矛头点为5)
+    // 点5: 五号矛头对接 (is_finsh=2), 点4: 四号矛头对接 (is_finsh=3)
     ctx_.point_table[5].use_spearhead = true;
+    ctx_.point_table[5].docking_cmd = 2;
+    ctx_.point_table[4].use_spearhead = true;
+    ctx_.point_table[4].docking_cmd = 3;
 
     ctx_.zone1_route_ids = declare_parameter<std::vector<int64_t>>(
-        "zone1_route", std::vector<int64_t>{6});
+        "zone1_route", std::vector<int64_t>{4, 5});
 
     ctx_.point_table[7] = {7,
                            declare_parameter<double>("zone1_point_2_x", 0.0),
