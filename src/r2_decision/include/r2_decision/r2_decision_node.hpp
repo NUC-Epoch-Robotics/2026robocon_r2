@@ -15,6 +15,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "robot_serial/msg/juece.hpp"
+#include "robot_serial/msg/location.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/u_int8.hpp"
@@ -178,6 +179,11 @@ struct Context
     double odom_y{0.0};
     double odom_yaw{0.0};
     bool odom_received{false};
+
+    // ---- DT35 location mirror (for fine-tune) ----
+    double dt35_x{0.0};
+    double dt35_y{0.0};
+    bool dt35_received{false};
 
     // ---- odometry fine-tune target point (configurable via ROS params) ----
     double fine_tune_target_x{0.0};
@@ -458,7 +464,7 @@ private:
         NAV_POINT,          // 第一段: 变x (全局坐标系)
         ROTATE_90_CW,       // 顺时针转90度 (Nav2 navigate_to_pose)
         NAV_POINT_Y,        // 第二段: 变y (全局坐标系)
-        FINE_TUNE,          // odom 微调对齐 (cmd_vel + /odin1/odometry)
+        FINE_TUNE,          // DT35 微调对齐 (cmd_vel + /dt35/location)
         OPERATE,            // 抓矛头 (zhuangtai=1)
         ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
         DOCKING,            // 矛头对接 (zhuangtai=2/3)
@@ -550,6 +556,7 @@ private:
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
     void onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void onDt35Location(const robot_serial::msg::Location::SharedPtr msg);
     void onArea(const robot_serial::msg::Juece::SharedPtr msg);
 
     // ROS2
@@ -563,6 +570,7 @@ private:
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr button_state_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Subscription<robot_serial::msg::Location>::SharedPtr dt35_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
 
     // core

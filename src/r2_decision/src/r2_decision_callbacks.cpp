@@ -116,6 +116,19 @@ void R2DecisionNode::onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg)
     }
 }
 
+void R2DecisionNode::onDt35Location(const robot_serial::msg::Location::SharedPtr msg)
+{
+    ctx_.dt35_x = static_cast<double>(msg->x);
+    ctx_.dt35_y = static_cast<double>(msg->y);
+
+    if (!ctx_.dt35_received)
+    {
+        ctx_.dt35_received = true;
+        RCLCPP_INFO(get_logger(), "DT35 location received: x=%.3f y=%.3f",
+                    ctx_.dt35_x, ctx_.dt35_y);
+    }
+}
+
 void R2DecisionNode::onArea(const robot_serial::msg::Juece::SharedPtr msg)
 {
     if (msg->area != ctx_.area)

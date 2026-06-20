@@ -143,7 +143,7 @@ std::unique_ptr<TopState> WaitStartState::handleEvent(Context &ctx, ActionDispat
  *
  *   子状态流转:
  *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转90°)
- *     → NAV_POINT_Y(走Y) → FINE_TUNE(odom微调对齐) → OPERATE(zhuangtai=1抓) → ROTATE_180(转180°)
+ *     → NAV_POINT_Y(走Y) → FINE_TUNE(DT35微调对齐) → OPERATE(zhuangtai=1抓) → ROTATE_180(转180°)
  *     → DOCKING(zhuangtai=2/3对接) → WAIT_5S(等5s) → DOCKING_DONE(zhuangtai=4)
  *     → 等5s → zhuangtai=0 + area=2 → FINISH → Zone2
  *
@@ -195,12 +195,12 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
 {
     checkTimeLimit(ctx, act);
 
-    // FINE_TUNE: odom + cmd_vel 闭环对齐到 fine_tune 目标点, 收敛或超时 → OPERATE
+    // FINE_TUNE: DT35 + cmd_vel 闭环对齐到 fine_tune 目标点, 收敛或超时 → OPERATE
     if (sub_ == Sub::FINE_TUNE)
     {
-        // 全局误差
-        double ex = ctx.fine_tune_target_x - ctx.odom_x;
-        double ey = ctx.fine_tune_target_y - ctx.odom_y;
+        // 全局误差 (用 DT35 位置)
+        double ex = ctx.fine_tune_target_x - ctx.dt35_x;
+        double ey = ctx.fine_tune_target_y - ctx.dt35_y;
 
         // 误差转到 body 系: body = R(-yaw) * global_err
         double cy = std::cos(ctx.odom_yaw);
@@ -224,7 +224,7 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         {
             act.stopCmdVel();
             RCLCPP_INFO(rclcpp::get_logger("fsm"),
-                        "Zone1: FINE_TUNE aligned at (%.3f,%.3f) → OPERATE", ctx.odom_x, ctx.odom_y);
+                        "Zone1: FINE_TUNE aligned at dt35(%.3f,%.3f) → OPERATE", ctx.dt35_x, ctx.dt35_y);
             sub_ = Sub::OPERATE;
             enterSub(ctx, act);
         }
@@ -235,8 +235,8 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
             {
                 act.stopCmdVel();
                 RCLCPP_WARN(rclcpp::get_logger("fsm"),
-                            "Zone1: FINE_TUNE timeout (%.1fs) at (%.3f,%.3f), grab anyway → OPERATE",
-                            elapsed, ctx.odom_x, ctx.odom_y);
+                            "Zone1: FINE_TUNE timeout (%.1fs) at dt35(%.3f,%.3f), grab anyway → OPERATE",
+                            elapsed, ctx.dt35_x, ctx.dt35_y);
                 sub_ = Sub::OPERATE;
                 enterSub(ctx, act);
             }
@@ -445,7 +445,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::FINE_TUNE:
     {
-        // Nav2 到位后, 用 odom + cmd_vel 对齐到 fine_tune 目标点, 再抓
+        // Nav2 到位后, 用 DT35 + cmd_vel 对齐到 fine_tune 目标点, 再抓
         ctx.fine_tune_stable_count = 0;
         ctx.fine_tune_start_time = rclcpp::Clock().now();
         act.stopCmdVel();  // 起步前先清零速度
@@ -602,7 +602,7 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
         break;
 
     case Sub::FINE_TUNE:
-        // odom 微调由 onTick 驱动 (cmd_vel 闭环), 对齐/超时会切到 OPERATE
+        // DT35 微调由 onTick 驱动 (cmd_vel 闭环), 对齐/超时会切到 OPERATE
         break;
 
     case Sub::OPERATE:

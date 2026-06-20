@@ -51,6 +51,11 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
         "/odin1/odometry", 10,
         std::bind(&R2DecisionNode::onOdometry, this, _1));
 
+    // ── DT35 location subscription (for fine-tune) ──────────
+    dt35_sub_ = create_subscription<robot_serial::msg::Location>(
+        "/dt35/location", 10,
+        std::bind(&R2DecisionNode::onDt35Location, this, _1));
+
     // ── main loop ─────────────────────────────────────────────
     timer_ = create_wall_timer(
         std::chrono::milliseconds(20),
