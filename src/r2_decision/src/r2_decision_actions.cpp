@@ -128,7 +128,10 @@ void ActionDispatcher::handleArmDone(uint8_t command, bool success)
 
 void ActionDispatcher::sendSpearheadCommand(uint8_t cmd)
 {
-    // 暂停心跳, 发抓矛头指令 (is_finsh 字段携带)
+    // 清理旧状态, 防止心跳在 DONE 后发 zhuangtai=0
+    spearhead_active_ = false;
+    waiting_spearhead_ack_ = false;
+
     pending_spearhead_cmd_ = cmd;
     waiting_spearhead_ack_ = true;
     spearhead_active_ = true;  // 直到 DONE 前一直有效, 用于回调路由
@@ -158,8 +161,8 @@ void ActionDispatcher::handleSpearheadAck(uint8_t command)
 void ActionDispatcher::handleSpearheadDone(uint8_t command, bool success)
 {
     waiting_spearhead_ack_ = false;
-    spearhead_active_ = false;  // 抓矛头完成, 恢复 arm command 路由
-    pending_spearhead_cmd_ = 0;
+    // 不在这里清 spearhead_active_, 让 FSM 处理完事件后再清
+    // 防止心跳在 FSM 发下一个命令之前发 zhuangtai=0
     if (command != last_spearhead_done_cmd_ || success != last_spearhead_done_success_)
     {
         RCLCPP_INFO(rclcpp::get_logger("actions"), "SPEARHEAD DONE: cmd=%d success=%d", command, success);
@@ -213,11 +216,19 @@ void ActionDispatcher::tickReliability()
         return;
     }
 
-    // idle heartbeat (不发 spearhead 和 arm 指令时才发心跳)
+    // idle heartbeat
     if (!stair_timer_ && !entry_grab_timer_ && !zone2_grab_timer_ &&
         (now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1'000'000)
     {
-        publishCmd(0);
+        if (spearhead_active_ && pending_spearhead_cmd_ != 0)
+        {
+            // 等待 spearhead DONE 期间, 重发当前命令而不是发 zhuangtai=0
+            publishCmdWithArea(0, 0, pending_spearhead_cmd_);
+        }
+        else
+        {
+            publishCmd(0);
+        }
         last_idle_heartbeat_time_ = now_time;
     }
 }
