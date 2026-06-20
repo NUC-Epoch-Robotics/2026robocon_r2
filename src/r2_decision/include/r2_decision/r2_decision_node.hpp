@@ -222,7 +222,7 @@ struct Context
     int rotation_stable_count{0};
     rclcpp::Time rotation_start_time{0, 0, RCL_ROS_TIME};
 
-    // ---- odometry fine-tune state (deprecated, kept for compatibility) ----
+    // ---- odometry fine-tune state (FINE_TUNE 子状态用) ----
     int fine_tune_stable_count{0};
     rclcpp::Time fine_tune_start_time{0, 0, RCL_ROS_TIME};
 
@@ -458,6 +458,7 @@ private:
         NAV_POINT,          // 第一段: 变x (全局坐标系)
         ROTATE_90_CW,       // 顺时针转90度 (Nav2 navigate_to_pose)
         NAV_POINT_Y,        // 第二段: 变y (全局坐标系)
+        FINE_TUNE,          // odom 微调对齐 (cmd_vel + /odin1/odometry)
         OPERATE,            // 抓矛头 (zhuangtai=1)
         ROTATE_180,         // 转180度 (Nav2 navigate_to_pose)
         DOCKING,            // 矛头对接 (zhuangtai=2/3)

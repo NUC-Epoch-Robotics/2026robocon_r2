@@ -143,7 +143,7 @@ std::unique_ptr<TopState> WaitStartState::handleEvent(Context &ctx, ActionDispat
  *
  *   子状态流转:
  *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转90°)
- *     → NAV_POINT_Y(走Y) → OPERATE(zhuangtai=1抓) → ROTATE_180(转180°)
+ *     → NAV_POINT_Y(走Y) → FINE_TUNE(odom微调对齐) → OPERATE(zhuangtai=1抓) → ROTATE_180(转180°)
  *     → DOCKING(zhuangtai=2/3对接) → WAIT_5S(等5s) → DOCKING_DONE(zhuangtai=4)
  *     → 等5s → zhuangtai=0 + area=2 → FINISH → Zone2
  *
@@ -167,6 +167,7 @@ const char *Zone1State::name() const
     case Sub::NAV_POINT:      return "Zone1/NavPoint";
     case Sub::ROTATE_90_CW:   return "Zone1/Rotate90CW";
     case Sub::NAV_POINT_Y:    return "Zone1/NavPointY";
+    case Sub::FINE_TUNE:      return "Zone1/FineTune";
     case Sub::OPERATE:        return "Zone1/Operate";
     case Sub::ROTATE_180:     return "Zone1/Rotate180";
     case Sub::DOCKING:        return "Zone1/Docking";
@@ -193,6 +194,54 @@ std::unique_ptr<TopState> Zone1State::onEnter(Context &ctx, ActionDispatcher &ac
 std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act)
 {
     checkTimeLimit(ctx, act);
+
+    // FINE_TUNE: odom + cmd_vel 闭环对齐到 fine_tune 目标点, 收敛或超时 → OPERATE
+    if (sub_ == Sub::FINE_TUNE)
+    {
+        // 全局误差
+        double ex = ctx.fine_tune_target_x - ctx.odom_x;
+        double ey = ctx.fine_tune_target_y - ctx.odom_y;
+
+        // 误差转到 body 系: body = R(-yaw) * global_err
+        double cy = std::cos(ctx.odom_yaw);
+        double sy = std::sin(ctx.odom_yaw);
+        double err_body_x =  cy * ex + sy * ey;
+        double err_body_y = -sy * ex + cy * ey;
+
+        // bang-bang 速度: 超阈值就全速纠, 否则停该轴
+        const double th = ctx.fine_tune_xy_threshold;
+        double vx = (std::fabs(err_body_x) > th) ? ctx.fine_tune_speed_x * ((err_body_x > 0) ? 1.0 : -1.0) : 0.0;
+        double vy = (std::fabs(err_body_y) > th) ? ctx.fine_tune_speed_y * ((err_body_y > 0) ? 1.0 : -1.0) : 0.0;
+        act.publishCmdVel(vx, vy, 0.0);
+
+        bool aligned = (std::fabs(ex) < th) && (std::fabs(ey) < th);
+        if (aligned)
+            ++ctx.fine_tune_stable_count;
+        else
+            ctx.fine_tune_stable_count = 0;
+
+        if (ctx.fine_tune_stable_count >= ctx.fine_tune_stable_required)
+        {
+            act.stopCmdVel();
+            RCLCPP_INFO(rclcpp::get_logger("fsm"),
+                        "Zone1: FINE_TUNE aligned at (%.3f,%.3f) → OPERATE", ctx.odom_x, ctx.odom_y);
+            sub_ = Sub::OPERATE;
+            enterSub(ctx, act);
+        }
+        else
+        {
+            double elapsed = (rclcpp::Clock().now() - ctx.fine_tune_start_time).seconds();
+            if (elapsed > ctx.fine_tune_timeout_s)
+            {
+                act.stopCmdVel();
+                RCLCPP_WARN(rclcpp::get_logger("fsm"),
+                            "Zone1: FINE_TUNE timeout (%.1fs) at (%.3f,%.3f), grab anyway → OPERATE",
+                            elapsed, ctx.odom_x, ctx.odom_y);
+                sub_ = Sub::OPERATE;
+                enterSub(ctx, act);
+            }
+        }
+    }
 
     // WAIT_5S: 计时5秒后 → DOCKING_DONE (发 zhuangtai=4)
     if (sub_ == Sub::WAIT_5S)
@@ -394,6 +443,18 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(t.x, t.y, t.z, 0, 0, -0.707, 0.707, ctx);
         break;
     }
+    case Sub::FINE_TUNE:
+    {
+        // Nav2 到位后, 用 odom + cmd_vel 对齐到 fine_tune 目标点, 再抓
+        ctx.fine_tune_stable_count = 0;
+        ctx.fine_tune_start_time = rclcpp::Clock().now();
+        act.stopCmdVel();  // 起步前先清零速度
+        RCLCPP_INFO(rclcpp::get_logger("fsm"),
+                    "Zone1: FINE_TUNE align to (%.3f,%.3f) th=%.3f speed=%.2f timeout=%.1fs",
+                    ctx.fine_tune_target_x, ctx.fine_tune_target_y,
+                    ctx.fine_tune_xy_threshold, ctx.fine_tune_speed_x, ctx.fine_tune_timeout_s);
+        break;
+    }
     case Sub::OPERATE:
     {
         // 导航到了矛头点, 发 zhuangtai=1 开始抓
@@ -534,10 +595,14 @@ std::unique_ptr<TopState> Zone1State::handleSubEvent(Context &ctx, ActionDispatc
             }
             else
             {
-                sub_ = Sub::OPERATE;
+                sub_ = Sub::FINE_TUNE;
             }
             enterSub(ctx, act);
         }
+        break;
+
+    case Sub::FINE_TUNE:
+        // odom 微调由 onTick 驱动 (cmd_vel 闭环), 对齐/超时会切到 OPERATE
         break;
 
     case Sub::OPERATE:
