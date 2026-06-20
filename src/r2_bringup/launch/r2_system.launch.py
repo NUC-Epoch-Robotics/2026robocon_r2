@@ -18,8 +18,6 @@ def generate_launch_description():
     enable_grab_scene = LaunchConfiguration('enable_grab_scene')
     grab_scene_camera_index = LaunchConfiguration('grab_scene_camera_index')
     is_red_side = LaunchConfiguration('is_red_side')
-    sim_mode = LaunchConfiguration('sim_mode')
-
     return LaunchDescription([
         DeclareLaunchArgument(
             'enable_lightboard', default_value='true',
@@ -42,9 +40,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'is_red_side', default_value='true',
             description='Red side or blue side'),
-        DeclareLaunchArgument(
-            'sim_mode', default_value='false',
-            description='Simulation mode: print decision traces, no hardware required'),
 
         # ── Decision node ────────────────────────────────────
         Node(
@@ -53,7 +48,6 @@ def generate_launch_description():
             name='r2_decision_node',
             output='screen',
             parameters=[{
-                'sim_mode': sim_mode,
                 'nav_frame_id': 'odom',
                 # ── 矛头/吸盘指令 ──
                 'spearhead_extend_cmd': 2,   # 伸吸盘指令 (zhuangtai 字段)
@@ -164,14 +158,6 @@ def generate_launch_description():
                 'zone2_fixed_3_stand_height': 0,
                 'zone2_fixed_3_stair_cmd': 0,
             }],
-        ),
-
-        # ── Fake hardware (simulation / testing) ─────────────
-        Node(
-            package='r2_fake_upper_body',
-            executable='fake_upper_body_node',
-            name='fake_upper_body_node',
-            output='screen',
         ),
 
         # ── Lightboard detector (3x4 RGBW) ───────────────────

@@ -23,8 +23,7 @@ void R2DecisionNode::onUpperDone(const robot_serial::msg::Juece::SharedPtr msg)
     // zhuangtai==1 表示上位机完成, status_bit 携带指令值, is_finsh!=0 成功
     if (msg->zhuangtai != 1) return;
 
-    // 台阶完成 → DOWN_JUECE_DONE (优先级最高, 因为 startStair 发的 status_bit=1/2
-    // 会被 fake_upper_body 当成普通 arm command 回 DONE)
+    // 台阶完成 → DOWN_JUECE_DONE (优先级最高)
     if (actions_.isStairActive())
     {
         actions_.stopStair();

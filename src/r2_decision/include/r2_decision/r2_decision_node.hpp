@@ -166,7 +166,6 @@ struct Context
     double entry_stair1_x{1.8}, entry_stair1_y{1.41};
     // 入口转向点 x=3.0 (y 用 entry_block2_y): 上台阶#1后走到这里顺时针转90°
     double entry_rotate_x{3.0};
-    bool sim_mode{false};
 
     // ---- sensor mirror ----
     bool spearhead_exists{false};

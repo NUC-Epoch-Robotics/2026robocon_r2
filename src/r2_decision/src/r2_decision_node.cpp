@@ -201,13 +201,10 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     ctx_.entry_stair1_y = declare_parameter<double>("entry_stair1_y", 1.41);
     ctx_.entry_rotate_x = declare_parameter<double>("entry_rotate_x", 3.0);
 
-    // Sim mode
-    ctx_.sim_mode = declare_parameter<bool>("sim_mode", false);
-
     // ── start state machine ───────────────────────────────────
     fsm_.start(std::make_unique<BootState>(), ctx_, actions_);
 
-    RCLCPP_INFO(get_logger(), "R2 Decision Node Started (sim_mode=%d)", ctx_.sim_mode);
+    RCLCPP_INFO(get_logger(), "R2 Decision Node Started");
 }
 
 void R2DecisionNode::tick()

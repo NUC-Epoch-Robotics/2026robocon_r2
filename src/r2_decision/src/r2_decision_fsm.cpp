@@ -71,8 +71,6 @@ void StateMachine::transitionTo(std::unique_ptr<TopState> next, Context &ctx, Ac
     if (current_)
     {
         current_->onExit(ctx, act); // 离开旧状态, 清理资源
-        if (ctx.sim_mode)
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "[SIM] %s -> %s", current_->name(), next->name());
     }
     current_ = std::move(next);
     if (current_)
@@ -82,8 +80,6 @@ void StateMachine::transitionTo(std::unique_ptr<TopState> next, Context &ctx, Ac
         auto chained = current_->onEnter(ctx, act);
         while (chained)
         {
-            if (ctx.sim_mode)
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "[SIM] %s -> %s", current_->name(), chained->name());
             current_->onExit(ctx, act);
             current_ = std::move(chained);
             chained = current_->onEnter(ctx, act);
