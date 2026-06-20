@@ -222,14 +222,20 @@ void ActionDispatcher::tickReliability()
     {
         // DONE 到了但 FSM 还没处理事件, 跳过本次心跳避免发 zhuangtai=0
         spearhead_done_pending_ = false;
-        last_idle_heartbeat_time_ = now_time;  // 重置计时, 不发任何东西
+        last_idle_heartbeat_time_ = now_time;
     }
     else if (!stair_timer_ && !entry_grab_timer_ && !zone2_grab_timer_ &&
         (now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1'000'000)
     {
         if (spearhead_active_ && pending_spearhead_cmd_ != 0)
         {
+            // 等待 spearhead DONE 期间, 重发当前命令
             publishCmdWithArea(0, 0, pending_spearhead_cmd_);
+        }
+        else if (hold_cmd_ != 0)
+        {
+            // 等待期间维持状态 (如 DOCKING_DONE 等待时保持 zhuangtai=4 不松夹爪)
+            publishCmdWithArea(0, 0, hold_cmd_);
         }
         else
         {

@@ -278,6 +278,7 @@ public:
     void handleSpearheadDone(uint8_t command, bool success);
     bool isWaitingSpearheadAck() const { return waiting_spearhead_ack_; }
     bool hasPendingSpearhead() const { return spearhead_active_; }
+    void setHoldCmd(uint8_t cmd) { hold_cmd_ = cmd; }  // 等待期间心跳维持这个命令
 
     // --- stair ---
     void startStair(uint8_t target_cmd, Context &ctx, StairContext sc = StairContext::NORMAL);
@@ -349,6 +350,7 @@ private:
     bool spearhead_active_{false};  // true from sendSpearheadCommand until DONE
     bool spearhead_done_pending_{false};  // DONE 到了但 FSM 还没处理, 跳过一次心跳
     uint8_t pending_spearhead_cmd_{0};
+    uint8_t hold_cmd_{0};  // 等待期间心跳重发这个 zhuangtai 值 (保持夹爪状态)
     uint8_t last_spearhead_done_cmd_{0xFF};
     bool last_spearhead_done_success_{true};
     rclcpp::Time last_spearhead_send_time_{0, 0, RCL_ROS_TIME};

@@ -214,7 +214,8 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         {
             // zhuangtai=4 的 5s 到了, 发 zhuangtai=0 area=1
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → zhuangtai=0 area=1");
-            act.publishCmdWithArea(0, 0, 0);  // zhuangtai=0, area=1 (ctx.area 还是 1)
+            act.setHoldCmd(0);  // 清掉 hold, 允许发 zhuangtai=0
+            act.publishCmdWithArea(0, 0, 0);  // zhuangtai=0, area=1
             ctx.wait_5s_start_time = rclcpp::Clock().now();
             ctx.zone1_dock_step = 1;
         }
@@ -366,6 +367,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         }
         ctx.zone1_arm_retry = 0;
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1 point %d: GRAB zhuangtai=1 (docking_cmd=%d)", pid, it->second.docking_cmd);
+        act.setHoldCmd(1);  // 抓取后保持 zhuangtai=1 不松夹爪
         act.sendSpearheadCommand(1);  // zhuangtai=1: 开始抓
         break;
     }
@@ -398,6 +400,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         }
         uint8_t cmd = it->second.docking_cmd;
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING zhuangtai=%d (point %d)", cmd, pid);
+        act.setHoldCmd(cmd);  // 对接后保持 zhuangtai=2/3 不松夹爪
         act.sendSpearheadCommand(cmd);
         break;
     }
@@ -412,6 +415,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     {
         // 发 zhuangtai=4, 然后等5s → zhuangtai=0 area=1 → 等5s → zhuangtai=0 area=2
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE zhuangtai=4");
+        act.setHoldCmd(4);  // 等待期间保持 zhuangtai=4 不松夹爪
         act.sendSpearheadCommand(4);
         ctx.wait_5s_start_time = rclcpp::Clock().now();
         ctx.zone1_dock_step = 0;
