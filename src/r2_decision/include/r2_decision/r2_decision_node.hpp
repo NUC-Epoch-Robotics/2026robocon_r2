@@ -12,7 +12,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 
-#include <nav_msgs/msg/odometry.hpp>
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "robot_serial/msg/juece.hpp"
 #include "robot_serial/msg/location.hpp"
@@ -173,12 +172,6 @@ struct Context
     bool spearhead_exists{false};
     bool lightboard_map_received{false};
     uint8_t area{0};  // 串口发的区号: 0=无状态, 1=一区, 2=二区, 3=三区
-
-    // ---- odometry mirror (from /odin1/odometry) ----
-    double odom_x{0.0};
-    double odom_y{0.0};
-    double odom_yaw{0.0};
-    bool odom_received{false};
 
     // ---- DT35 location mirror (for fine-tune) ----
     double dt35_x{0.0};
@@ -555,7 +548,6 @@ private:
     void onLightboardMap(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
     void onGrabSceneReady(const std_msgs::msg::Bool::SharedPtr msg);
     void onButtonState(const std_msgs::msg::UInt8::SharedPtr msg);
-    void onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg);
     void onDt35Location(const robot_serial::msg::Location::SharedPtr msg);
     void onArea(const robot_serial::msg::Juece::SharedPtr msg);
 
@@ -569,7 +561,6 @@ private:
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr lightboard_map_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr grab_scene_ready_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr button_state_sub_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<robot_serial::msg::Location>::SharedPtr dt35_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
 

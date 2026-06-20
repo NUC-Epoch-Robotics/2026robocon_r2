@@ -142,7 +142,7 @@ std::unique_ptr<TopState> WaitStartState::handleEvent(Context &ctx, ActionDispat
  * ============================================================================
  *
  *   子状态流转:
- *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(odom自转90°)
+ *     EXTEND_SUCTION → NAV_POINT(走X) → ROTATE_90_CW(自转90°)
  *     → NAV_POINT_Y(走Y) → FINE_TUNE(DT35微调对齐) → OPERATE(zhuangtai=1抓) → ROTATE_180(转180°)
  *     → DOCKING(zhuangtai=2/3对接) → WAIT_5S(等5s) → DOCKING_DONE(zhuangtai=4)
  *     → 等5s → zhuangtai=0 + area=2 → FINISH → Zone2
@@ -198,15 +198,11 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
     // FINE_TUNE: DT35 + cmd_vel 闭环对齐到 fine_tune 目标点, 收敛或超时 → OPERATE
     if (sub_ == Sub::FINE_TUNE)
     {
-        // 全局误差 (用 DT35 位置)
-        double ex = ctx.fine_tune_target_x - ctx.dt35_x;
-        double ey = ctx.fine_tune_target_y - ctx.dt35_y;
-
-        // 误差转到 body 系: body = R(-yaw) * global_err
-        double cy = std::cos(ctx.odom_yaw);
-        double sy = std::sin(ctx.odom_yaw);
-        double err_body_x =  cy * ex + sy * ey;
-        double err_body_y = -sy * ex + cy * ey;
+        // DT35 传感器值越小=越近, 越大=越远
+        // x: 值越小=离前方越近=机器人太靠前 → 后退(vx<0), 所以取反
+        // y: 值越大=离左侧越远=机器人太靠左 → 右移(vy<0), 方向一致
+        double err_body_x = ctx.dt35_x - ctx.fine_tune_target_x;  // 取反: x小→err负→vx负→后退
+        double err_body_y = ctx.fine_tune_target_y - ctx.dt35_y;  // y大→err负→vy负→右移
 
         // bang-bang 速度: 超阈值就全速纠, 否则停该轴
         const double th = ctx.fine_tune_xy_threshold;
@@ -214,7 +210,7 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         double vy = (std::fabs(err_body_y) > th) ? ctx.fine_tune_speed_y * ((err_body_y > 0) ? 1.0 : -1.0) : 0.0;
         act.publishCmdVel(vx, vy, 0.0);
 
-        bool aligned = (std::fabs(ex) < th) && (std::fabs(ey) < th);
+        bool aligned = (std::fabs(err_body_x) < th) && (std::fabs(err_body_y) < th);
         if (aligned)
             ++ctx.fine_tune_stable_count;
         else
@@ -421,14 +417,12 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_90_CW:
     {
-        // 从当前朝向顺时针转90度 (相对旋转, 不是绝对角度)
-        double target_yaw = ctx.odom_yaw - M_PI_2;
-        while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
-        while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
+        // 顺时针转90度: yaw=0 → target=-90°
+        double target_yaw = -M_PI_2;
         double qz = std::sin(target_yaw / 2.0);
         double qw = std::cos(target_yaw / 2.0);
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f) target_yaw=%.3f (current=%.3f)",
-                    ctx.current_x, ctx.current_y, target_yaw, ctx.odom_yaw);
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: ROTATE_90_CW at (%.2f, %.2f) target_yaw=%.3f",
+                    ctx.current_x, ctx.current_y, target_yaw);
         act.sendNavigateWithQuat(ctx.current_x, ctx.current_y, 0, 0, 0, qz, qw, ctx);
         break;
     }
@@ -475,9 +469,8 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
     }
     case Sub::ROTATE_180:
     {
-        // 从当前朝向转180度: 当前-90° → +90° (qz=0.707, qw=0.707)
-        // 如果当前是其他朝向, 同理加π
-        double target_yaw = ctx.odom_yaw + M_PI;
+        // 转180度: yaw=0 → target=180°
+        double target_yaw = M_PI;
         while (target_yaw > M_PI)  target_yaw -= 2.0 * M_PI;
         while (target_yaw < -M_PI) target_yaw += 2.0 * M_PI;
         double qz = std::sin(target_yaw / 2.0);

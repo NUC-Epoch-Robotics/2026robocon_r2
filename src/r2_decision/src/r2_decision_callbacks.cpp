@@ -89,33 +89,6 @@ void R2DecisionNode::onButtonState(const std_msgs::msg::UInt8::SharedPtr msg)
     if (button == ButtonState::ZONE3_RETRY)  postEvent(EventType::ZONE3_RETRY);
 }
 
-void R2DecisionNode::onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg)
-{
-    // 更新当前位置
-    ctx_.odom_x = msg->pose.pose.position.x;
-    ctx_.odom_y = msg->pose.pose.position.y;
-
-    // 四元数 → 欧拉角 (仅偏航角 yaw)
-    double qx = msg->pose.pose.orientation.x;
-    double qy = msg->pose.pose.orientation.y;
-    double qz = msg->pose.pose.orientation.z;
-    double qw = msg->pose.pose.orientation.w;
-
-    // sin(yaw/2) 和 cos(yaw/2) 的标准公式:
-    //   sin(yaw) = 2*(qw*qz + qx*qy)
-    //   cos(yaw) = 1 - 2*(qy*qy + qz*qz)
-    double siny_cosp = 2.0 * (qw * qz + qx * qy);
-    double cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
-    ctx_.odom_yaw = std::atan2(siny_cosp, cosy_cosp);
-
-    if (!ctx_.odom_received)
-    {
-        ctx_.odom_received = true;
-        RCLCPP_INFO(get_logger(), "Odometry received: x=%.3f y=%.3f yaw=%.3f",
-                    ctx_.odom_x, ctx_.odom_y, ctx_.odom_yaw);
-    }
-}
-
 void R2DecisionNode::onDt35Location(const robot_serial::msg::Location::SharedPtr msg)
 {
     ctx_.dt35_x = static_cast<double>(msg->x);

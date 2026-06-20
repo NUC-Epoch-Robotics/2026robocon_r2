@@ -46,14 +46,9 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
         "r2/control/button_state", 10,
         std::bind(&R2DecisionNode::onButtonState, this, _1));
 
-    // ── odometry subscription (for fine-tune) ────────────────
-    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-        "/odin1/odometry", 10,
-        std::bind(&R2DecisionNode::onOdometry, this, _1));
-
     // ── DT35 location subscription (for fine-tune) ──────────
     dt35_sub_ = create_subscription<robot_serial::msg::Location>(
-        "/dt35/location", 10,
+        "/dt35/location", rclcpp::SensorDataQoS(),
         std::bind(&R2DecisionNode::onDt35Location, this, _1));
 
     // ── main loop ─────────────────────────────────────────────

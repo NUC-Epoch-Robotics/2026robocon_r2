@@ -57,9 +57,9 @@ def generate_launch_description():
                 'nav_frame_id': 'odom',
                 # ── 矛头/吸盘指令 ──
                 'spearhead_extend_cmd': 2,   # 伸吸盘指令 (zhuangtai 字段)
-                # ── 里程计微调目标点: Nav2 到矛头点后, 用 odom 对齐到此处再抓 ──
-                'fine_tune_target_x': 0.710,
-                'fine_tune_target_y': -1.170,
+                # ── DT35 微调目标点: Nav2 到矛头点后, 用 DT35 对齐到此处再抓 ──
+                'fine_tune_target_x': 0.32,
+                'fine_tune_target_y': 0.98,
                 'fine_tune_target_yaw': 0.0,
                 # 微调参数 (bang-bang)
                 'fine_tune_xy_threshold': 0.01,
