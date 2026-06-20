@@ -284,6 +284,7 @@ public:
     bool isWaitingSpearheadAck() const { return waiting_spearhead_ack_; }
     bool hasPendingSpearhead() const { return spearhead_active_; }
     void setHoldCmd(uint8_t cmd) { hold_cmd_ = cmd; }  // 等待期间心跳维持这个命令
+    void suppressHeartbeat(bool s) { suppress_heartbeat_ = s; }  // true=抑制空闲心跳 (不重发), 用于 DOCKING_DONE 收尾
 
     // --- stair ---
     void startStair(uint8_t target_cmd, Context &ctx, StairContext sc = StairContext::NORMAL);
@@ -358,6 +359,7 @@ private:
     int spearhead_retry_count_{0};  // 当前 spearhead 指令已重发次数 (含首次)
     bool spearhead_acked_{false};   // 收到对应 ACK 后置 true, 区分"未送达"和"执行中"
     uint8_t hold_cmd_{0};  // 等待期间心跳重发这个 zhuangtai 值 (保持夹爪状态)
+    bool suppress_heartbeat_{false};  // true=不重发空闲心跳 (DOCKING_DONE 收尾阶段, 避免 area=1 的 zhuangtai=0 淹没 area=2 跳变)
     uint8_t last_spearhead_done_cmd_{0xFF};
     bool last_spearhead_done_success_{true};
     rclcpp::Time last_spearhead_send_time_{0, 0, RCL_ROS_TIME};

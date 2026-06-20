@@ -302,6 +302,11 @@ void ActionDispatcher::tickReliability()
         spearhead_done_pending_ = false;
         last_idle_heartbeat_time_ = now_time;
     }
+    else if (suppress_heartbeat_)
+    {
+        // DOCKING_DONE 收尾阶段: 不重发任何命令, 保证 area=2 的 zhuangtai=0 单发不被淹没
+        last_idle_heartbeat_time_ = now_time;
+    }
     else if (!stair_timer_ && !entry_grab_timer_ && !zone2_grab_timer_ &&
         (now_time - last_idle_heartbeat_time_).nanoseconds() >= kIdleHeartbeatPeriodMs * 1'000'000)
     {

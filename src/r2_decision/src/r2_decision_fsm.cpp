@@ -236,6 +236,7 @@ std::unique_ptr<TopState> Zone1State::onTick(Context &ctx, ActionDispatcher &act
         {
             // 收回夹爪的 5s 到了, 进二区
             RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE → 收回完成, 进二区");
+            act.suppressHeartbeat(false);  // 恢复空闲心跳 (二区需要正常的心跳/指令重发)
             sub_ = Sub::FINISH;
             enterSub(ctx, act);
         }
@@ -428,6 +429,7 @@ void Zone1State::enterSub(Context &ctx, ActionDispatcher &act)
         // 这样确保下位机真的做完 zhuangtai=4 再往下发 zhuangtai=0, 避免提前发指令.
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone1: DOCKING_DONE zhuangtai=4 (等 DONE 再计时)");
         act.setHoldCmd(4);  // 等待期间保持 zhuangtai=4 不松夹爪
+        act.suppressHeartbeat(true);  // 收尾阶段抑制空闲心跳: 避免 area=1 的 zhuangtai=0 重发淹没 area=2 跳变
         ctx.zone1_dock4_wait_done = true;
         ctx.zone1_dock_step = 0;
         act.sendSpearheadCommand(4);
