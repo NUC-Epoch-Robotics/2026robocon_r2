@@ -894,27 +894,16 @@ void Zone2State::enterSub(Context &ctx, ActionDispatcher &act)
         const auto &t = ctx.zone2_tasks[ctx.zone2_index];
         if (ctx.use_fixed_zone2_route)
         {
-            // ── 固定路线中段抓取 (统一流程: backoff → grab_start) ──
+            // ── 固定路线中段抓取 (统一流程: grab → suck → retreat → retract) ──
             // 入口块由 ENTRY_GRAB 接管, 此处仅处理中段抓取点.
             if (ctx.grab_context != GrabContext::ZONE2_FIXED)
             {
-                // step 0: 后退一小段 (zone2_fixed_backoff=0.1m)
+                // step 0: 直接开始抓取 (不先退, 退的动作在吸到块之后做)
                 if (ctx.zone2_grab_step == 0)
-                {
-                    double yaw = ActionDispatcher::yawFromQuat(t.qx, t.qy, t.qz, t.qw);
-                    double bx = t.approach_x - std::cos(yaw) * ctx.zone2_fixed_backoff;
-                    double by = t.approach_y - std::sin(yaw) * ctx.zone2_fixed_backoff;
-                    RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2Grab point %d: backoff to (%.2f,%.2f)", t.id, bx, by);
-                    ctx.zone2_grab_step = 1;
-                    act.sendNavigateWithQuat(bx, by, 0, t.qx, t.qy, t.qz, t.qw, ctx);
-                    return;
-                }
-                // step 1: 后退到了, 开始抓取
-                if (ctx.zone2_grab_step == 1)
                 {
                     RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2Grab point %d: START is_finsh=%d", t.id, t.grab_is_finsh);
                     act.startZone2Grab(t.grab_is_finsh, ctx);
-                    ctx.zone2_grab_step = 2;
+                    ctx.zone2_grab_step = 1;
                 }
             }
             return;
@@ -1100,11 +1089,37 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.point0_nav_sent = false;
             tickGrab(ctx, act);
         }
-        // ── 固定路线非 Point0: backoff/forward 导航完成 ──
+        // ── 固定路线非 Point0: backoff/forward/retreat 导航完成 ──
         else if (e.type == EventType::NAV_DONE && ctx.use_fixed_zone2_route)
         {
             if (!e.success)
                 RCLCPP_WARN(rclcpp::get_logger("fsm"), "Zone2Grab: nav failed");
+            // step 2: 倒回到了, 收回机械臂
+            if (ctx.zone2_grab_step == 2)
+            {
+                act.stopZone2Grab();
+                ctx.grab_context = GrabContext::NONE;
+                const auto &t = ctx.zone2_tasks[ctx.zone2_index];
+                if (t.id == 0)
+                {
+                    // Point0: 设 step=3 激活多步序列
+                    ctx.zone2_grab_step = 3;
+                }
+                else
+                {
+                    ctx.zone2_grab_step = 0;
+                    // 抓完 → 台阶/旋转/下一个
+                    if (t.stair_cmd == 1)
+                        sub_ = Sub::UP_STAIRS;
+                    else if (t.stair_cmd == 2)
+                        sub_ = Sub::DOWN_STAIRS;
+                    else if (t.use_rotate)
+                        sub_ = Sub::ROTATE;
+                    else
+                        sub_ = Sub::FINISH;
+                    enterSub(ctx, act);
+                }
+            }
             tickGrab(ctx, act);
         }
         // ── 动态路线: 抓取完成, 导航到方块位置后的 NAV_DONE ──
@@ -1124,35 +1139,18 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
                 sub_ = Sub::FINISH;
             enterSub(ctx, act);
         }
-        // ── 固定路线抓取完成 (UP_JUECE_DONE) ──
+        // ── 固定路线抓取完成 (UP_JUECE_DONE): 先退后收 ──
         else if (e.type == EventType::UP_JUECE_DONE && ctx.use_fixed_zone2_route)
         {
-            act.stopZone2Grab();
-            ctx.grab_context = GrabContext::NONE;
-            ctx.zone2_grab_step = 0;
             const auto &t = ctx.zone2_tasks[ctx.zone2_index];
-
-            // 抓完 → 台阶/旋转/下一个
-            if (t.stair_cmd == 1)
-            {
-                sub_ = Sub::UP_STAIRS;
-                enterSub(ctx, act);
-            }
-            else if (t.stair_cmd == 2)
-            {
-                sub_ = Sub::DOWN_STAIRS;
-                enterSub(ctx, act);
-            }
-            else if (t.use_rotate)
-            {
-                sub_ = Sub::ROTATE;
-                enterSub(ctx, act);
-            }
-            else
-            {
-                sub_ = Sub::FINISH;
-                enterSub(ctx, act);
-            }
+            // 吸到块了, 先往后退 (保持吸着), 到位后再收回
+            double yaw = ActionDispatcher::yawFromQuat(t.qx, t.qy, t.qz, t.qw);
+            double bx = t.approach_x - std::cos(yaw) * ctx.zone2_fixed_backoff;
+            double by = t.approach_y - std::sin(yaw) * ctx.zone2_fixed_backoff;
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "Zone2Grab point %d: sucked, retreat to (%.2f,%.2f)", t.id, bx, by);
+            ctx.zone2_grab_step = 2;
+            ctx.grab_context = GrabContext::ZONE2_FIXED;  // 标记倒回中, 防止 enterSub 重入
+            act.sendNavigateWithQuat(bx, by, 0, t.qx, t.qy, t.qz, t.qw, ctx);
         }
         // ── 动态路线: 机械臂动作完成 ──
         else if (e.type == EventType::ARM_DONE && !ctx.use_fixed_zone2_route)
@@ -1304,7 +1302,6 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
     case 0:
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 0: nav→块1approach (%.2f,%.2f)",
                     ctx.entry_approach_x, ctx.entry_block0_y);
-        ctx.entry_grab_step = 1;
         act.sendNavigateWithQuat(ctx.entry_approach_x, ctx.entry_block0_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 1:

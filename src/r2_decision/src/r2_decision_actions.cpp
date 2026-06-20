@@ -88,6 +88,7 @@ void ActionDispatcher::sendArmCommand(uint8_t cmd)
 
     pending_upper_cmd_ = cmd;
     waiting_upper_ack_ = true;
+    hold_cmd_ = cmd;  // ACK→DONE 期间心跳维持此指令, 防止回退到 zhuangtai=0
 
     auto now_time = node_.now();
     upper_cmd_start_time_ = now_time;
@@ -121,6 +122,7 @@ void ActionDispatcher::handleAck(uint8_t command)
 void ActionDispatcher::handleArmDone(uint8_t command, bool success)
 {
     waiting_upper_ack_ = false;
+    hold_cmd_ = 0;  // 清除 sendArmCommand 设的 hold, 允许心跳回 idle
     if (command != last_arm_done_cmd_ || success != last_arm_done_success_)
     {
         RCLCPP_INFO(rclcpp::get_logger("actions"), "ARM DONE: cmd=%d success=%d", command, success);
@@ -322,7 +324,7 @@ void ActionDispatcher::tickReliability()
         }
         else
         {
-            publishCmd(0);
+            publishCmdWithArea(0, 0, 0);
         }
         last_idle_heartbeat_time_ = now_time;
     }
