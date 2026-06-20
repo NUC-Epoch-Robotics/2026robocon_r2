@@ -1310,8 +1310,8 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         ctx.entry_sucked = false;
         ctx.entry_arrived = false;
         act.startZone2Grab(ctx.entry_block0_is_finsh, ctx);  // is_finsh=2 持续重发, 边走边吸
-        ctx.entry_grab_step = 2;
         act.sendNavigateWithQuat(ctx.entry_block0_x, ctx.entry_block0_y, 0, 0, 0, 0, 1, ctx);
+        // step 由 NAV_DONE handler 推进到 2
         break;
     case 2:
         // 由 handleSubEvent: 到达(NAV_DONE)后若 entry_sucked 则发倒回 nav 并进 step3
@@ -1326,8 +1326,8 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         ctx.entry_sucked = false;
         ctx.entry_arrived = false;
         act.startZone2Grab(ctx.entry_block2_is_finsh, ctx);  // is_finsh=1
-        ctx.entry_grab_step = 5;
         act.sendNavigateWithQuat(ctx.entry_block2_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
+        // step 由 NAV_DONE handler 推进到 5
         break;
     case 5:
         // 到达后等 UP_JUECE 吸上, 见 handleSubEvent
