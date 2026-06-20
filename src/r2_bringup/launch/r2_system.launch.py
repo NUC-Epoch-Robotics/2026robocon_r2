@@ -69,11 +69,10 @@ def generate_launch_description():
                 'fine_tune_speed_x': 0.05,
                 'fine_tune_speed_y': 0.05,
                 'fine_tune_speed_yaw': 0.2,
-                # 矛头基准点 (1号矛头), 间距200mm
-                'spearhead_base_x': -0.198,
-                'spearhead_base_y': -0.659,
+                # 唯一要抓的矛头坐标 (id=5), 其余矛头不抓
+                'spearhead_base_x': 0.710,
+                'spearhead_base_y': -1.170,
                 'spearhead_base_z': -0.622,
-                'spearhead_spacing': 0.2,
                 'zone1_route': [5],
                 # 其他 Zone1 导航点 (非矛头)
                 'zone1_point_2_x': 1.7,

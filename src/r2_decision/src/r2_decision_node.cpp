@@ -66,24 +66,18 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
     ctx_.zone1_arm_command = static_cast<uint8_t>(declare_parameter<int>("zone1_arm_command", 0));
     ctx_.spearhead_extend_cmd = static_cast<uint8_t>(declare_parameter<int>("spearhead_extend_cmd", 2));
 
+    // 唯一要抓的矛头点 (id=5): 坐标直接来自 launch 参数, 其余矛头不抓
     double spearhead_base_x = declare_parameter<double>("spearhead_base_x", 0.0);
     double spearhead_base_y = declare_parameter<double>("spearhead_base_y", 0.0);
     double spearhead_base_z = declare_parameter<double>("spearhead_base_z", 0.0);
-    double spearhead_spacing = declare_parameter<double>("spearhead_spacing", 0.2);
-    for (int n = 1; n <= 6; ++n)
-    {
-        ctx_.point_table[n] = {n,
-                               spearhead_base_x + (n - 1) * spearhead_spacing,
-                               spearhead_base_y,
-                               spearhead_base_z,
-                               ctx_.zone1_arm_command,
-                               false};
-    }
-    // 点5: 五号矛头对接 (is_finsh=2), 点4: 四号矛头对接 (is_finsh=3)
-    ctx_.point_table[5].use_spearhead = true;
+    ctx_.point_table[5] = {5,
+                           spearhead_base_x,
+                           spearhead_base_y,
+                           spearhead_base_z,
+                           ctx_.zone1_arm_command,
+                           true};  // use_spearhead=true
+    // 五号矛头对接 (is_finsh=2)
     ctx_.point_table[5].docking_cmd = 2;
-    ctx_.point_table[4].use_spearhead = true;
-    ctx_.point_table[4].docking_cmd = 3;
 
     ctx_.zone1_route_ids = declare_parameter<std::vector<int64_t>>(
         "zone1_route", std::vector<int64_t>{4, 5});
