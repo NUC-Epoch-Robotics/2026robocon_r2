@@ -301,7 +301,7 @@ void ActionDispatcher::tickReliability()
 }
 
 // ==========================================================================
-// Stair — 只发1, 等DOWN_JUECE后再发0 (由FSM调stopStair)
+// Stair — 发1后500ms发0
 // ==========================================================================
 
 void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext sc)
@@ -311,14 +311,33 @@ void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext
     stair_context_ = sc;
     stair_active_ = true;
 
-    // 只发1, 不发0, 不发导航, 不发速度. 等台阶完成后FSM调stopStair发0.
     publishCmdWithArea(stair_target_cmd_);
+
+    stair_timer_ = node_.create_wall_timer(
+        std::chrono::milliseconds(500),
+        [this] {
+            if (stair_active_)
+            {
+                publishCmdWithArea(0);
+                stair_active_ = false;
+            }
+            if (stair_timer_)
+            {
+                stair_timer_->cancel();
+                stair_timer_.reset();
+            }
+        });
 
     (void)ctx;
 }
 
 void ActionDispatcher::stopStair()
 {
+    if (stair_timer_)
+    {
+        stair_timer_->cancel();
+        stair_timer_.reset();
+    }
     if (stair_active_)
     {
         publishCmdWithArea(0);
