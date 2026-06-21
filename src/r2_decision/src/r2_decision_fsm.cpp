@@ -765,8 +765,8 @@ std::unique_ptr<TopState> Zone2State::onEnter(Context &ctx, ActionDispatcher &ac
 std::unique_ptr<TopState> Zone2State::onTick(Context &ctx, ActionDispatcher &act)
 {
     // 入口抓取: 等待步骤由 onTick 计时驱动
-    //   step 2/7: 吸上后等5s (稳固)
-    //   step 4/9: stopGrab后等5s (收回)
+    //   step 2/7: 吸上后等10s (稳固)
+    //   step 4/9: stopGrab后等10s (收回)
     if (sub_ == Sub::ENTRY_GRAB &&
         (ctx.entry_grab_step == 2 || ctx.entry_grab_step == 4 ||
          ctx.entry_grab_step == 7 || ctx.entry_grab_step == 9))
@@ -774,7 +774,7 @@ std::unique_ptr<TopState> Zone2State::onTick(Context &ctx, ActionDispatcher &act
         bool is_hold = (ctx.entry_grab_step == 2 || ctx.entry_grab_step == 7);
         auto &start_time = is_hold ? ctx.entry_hold_start_time : ctx.entry_retract_start_time;
         auto elapsed = (rclcpp::Clock().now() - start_time).seconds();
-        if (elapsed > 5.0)
+        if (elapsed > 10.0)
         {
             int next_step = ctx.entry_grab_step + 1;
             RCLCPP_INFO(rclcpp::get_logger("fsm"),
@@ -965,7 +965,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_grab_step = 1;
             tickEntryGrab(ctx, act);
         }
-        // ── step1: is_finsh+导航并行, 等NAV_DONE+UP_JUECE → step2(等5s) ──
+        // ── step1: is_finsh+导航并行, 等NAV_DONE+UP_JUECE → step2(等10s) ──
         else if (e.type == EventType::NAV_DONE && ctx.entry_grab_step == 1)
         {
             if (!e.success)
@@ -973,7 +973,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_arrived = true;
             if (ctx.entry_sucked)
             {
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块1吸上+到达, 等5s稳固");
+                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块1吸上+到达, 等10s稳固");
                 ctx.entry_hold_start_time = rclcpp::Clock().now();
                 ctx.entry_grab_step = 2;
             }
@@ -984,12 +984,12 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_sucked = true;
             if (ctx.entry_arrived)
             {
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块1吸上+到达, 等5s稳固");
+                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块1吸上+到达, 等10s稳固");
                 ctx.entry_hold_start_time = rclcpp::Clock().now();
                 ctx.entry_grab_step = 2;
             }
         }
-        // ── step3: 倒回中, 等NAV_DONE → step4 (stopGrab+等5s) ──
+        // ── step3: 倒回中, 等NAV_DONE → step4 (stopGrab+等10s) ──
         else if (e.type == EventType::NAV_DONE && ctx.entry_grab_step == 3)
         {
             if (!e.success)
@@ -1007,7 +1007,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_grab_step = 6;
             tickEntryGrab(ctx, act);
         }
-        // ── step6: is_finsh=1+导航并行, 等NAV_DONE+UP_JUECE → step7(等5s) ──
+        // ── step6: is_finsh=1+导航并行, 等NAV_DONE+UP_JUECE → step7(等10s) ──
         else if (e.type == EventType::NAV_DONE && ctx.entry_grab_step == 6)
         {
             if (!e.success)
@@ -1015,7 +1015,7 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_arrived = true;
             if (ctx.entry_sucked)
             {
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块2吸上+到达, 等5s稳固");
+                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块2吸上+到达, 等10s稳固");
                 ctx.entry_hold_start_time = rclcpp::Clock().now();
                 ctx.entry_grab_step = 7;
             }
@@ -1026,12 +1026,12 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             ctx.entry_sucked = true;
             if (ctx.entry_arrived)
             {
-                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块2吸上+到达, 等5s稳固");
+                RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 块2吸上+到达, 等10s稳固");
                 ctx.entry_hold_start_time = rclcpp::Clock().now();
                 ctx.entry_grab_step = 7;
             }
         }
-        // ── step8: 倒回中, 等NAV_DONE → step9 (stopGrab+等5s) ──
+        // ── step8: 倒回中, 等NAV_DONE → step9 (stopGrab+等10s) ──
         else if (e.type == EventType::NAV_DONE && ctx.entry_grab_step == 8)
         {
             if (!e.success)
@@ -1341,17 +1341,17 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
  *   ─────────────────────────────────────────────────────────────────
  *    0  nav→块1approach(1.6,0.289)          NAV_DONE           →1
  *    1  is_finsh=2 + nav→块1(2.0,.289)      NAV_DONE+UP_JUECE  →2
- *    2  等5s (吸上稳固)                      onTick超时          →3
+ *    2  等10s (吸上稳固)                     onTick超时          →3
  *    3  nav→approach(1.6,0.289) 倒回        NAV_DONE           →4
- *    4  stopGrab(is_finsh=0) + 等5s         onTick超时          →5
+ *    4  stopGrab(is_finsh=0) + 等10s        onTick超时          →5
  *    5  nav→block2_approach(1.8,1.41)       NAV_DONE           →6
  *    6  is_finsh=1 + nav→块2(2.0,1.41)      NAV_DONE+UP_JUECE  →7
- *    7  等5s (吸上稳固)                      onTick超时          →8
+ *    7  等10s (吸上稳固)                     onTick超时          →8
  *    8  nav→approach(1.8,1.41) 倒回         NAV_DONE           →9
- *    9  stopGrab(is_finsh=0) + 等5s         onTick超时          →10
+ *    9  stopGrab(is_finsh=0) + 等10s        onTick超时          →10
  *   10  上台阶#1 (startStair)               DOWN_JUECE         →11
- *   11  nav→转向点(3.0,1.41)走稳            NAV_DONE           →12
- *   12  顺时针转90° (qz=-0.707,qw=0.707)   NAV_DONE           →13
+ *   11  顺时针转90° (qz=-0.707,qw=0.707)   NAV_DONE           →12
+ *   12  nav→转向点(3.0,1.41)走稳            NAV_DONE           →13
  *   13  上台阶#2 (登到3.0,0.289)            DOWN_JUECE         →14
  *   14  逆时针转90° (qz=+0.707,qw=0.707)   NAV_DONE           →15
  *   15  上台阶#3 (startStair)               DOWN_JUECE         →16
@@ -1377,7 +1377,7 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(ctx.entry_block0_x, ctx.entry_block0_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 2:
-        // 等5s稳固 (onTick 推进到 step 3)
+        // 等10s稳固 (onTick 推进到 step 3)
         break;
     case 3:
         // 发倒回 nav 到 approach
@@ -1385,7 +1385,7 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(ctx.entry_approach_x, ctx.entry_block0_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 4:
-        // stopGrab 已在 handleSubEvent 中调用, 等5s收回 (onTick 推进到 step 5)
+        // stopGrab 已在 handleSubEvent 中调用, 等10s收回 (onTick 推进到 step 5)
         break;
     // ── 块2 ──
     case 5:
@@ -1403,7 +1403,7 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(ctx.entry_block2_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 7:
-        // 等5s稳固 (onTick 推进到 step 8)
+        // 等10s稳固 (onTick 推进到 step 8)
         break;
     case 8:
         // 发倒回 nav 到 approach (1.8,1.41)
@@ -1411,7 +1411,7 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.sendNavigateWithQuat(ctx.entry_stair1_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 9:
-        // stopGrab 已在 handleSubEvent 中调用, 等5s收回 (onTick 推进到 step 10)
+        // stopGrab 已在 handleSubEvent 中调用, 等10s收回 (onTick 推进到 step 10)
         break;
     // ── 上台阶 + 转向 ──
     case 10:
@@ -1419,14 +1419,16 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.startStair(1, ctx);
         break;
     case 11:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 11: nav→转向点 (%.2f,%.2f) 走稳",
-                    ctx.entry_rotate_x, ctx.entry_block2_y);
-        act.sendNavigateWithQuat(ctx.entry_rotate_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
-        break;
-    case 12:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 12: 顺时针转90° @ (%.2f,%.2f)",
+        // 先顺时针转90° (在approach位置)
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 11: 顺时针转90° @ (%.2f,%.2f)",
                     ctx.entry_rotate_x, ctx.entry_block2_y);
         act.sendNavigateWithQuat(ctx.entry_rotate_x, ctx.entry_block2_y, 0, 0, 0, -0.707, 0.707, ctx);
+        break;
+    case 12:
+        // 再导航到转向点走稳
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 12: nav→转向点 (%.2f,%.2f) 走稳",
+                    ctx.entry_rotate_x, ctx.entry_block2_y);
+        act.sendNavigateWithQuat(ctx.entry_rotate_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
         break;
     case 13:
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 13: 上台阶#2 (登到 3.0,0.289)");
