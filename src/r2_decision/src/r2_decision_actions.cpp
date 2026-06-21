@@ -8,7 +8,7 @@
 
 ActionDispatcher::ActionDispatcher(rclcpp::Node &node) : node_(node)
 {
-    upper_cmd_pub_ = node_.create_publisher<robot_serial::msg::Juece>("/juece", 10);
+    upper_cmd_pub_ = node_.create_publisher<robot_serial::msg::Juece>("/juece", rclcpp::SensorDataQoS());
     spear_enable_pub_ = node_.create_publisher<std_msgs::msg::Bool>("spearhead/enable", 10);
     lightboard_enable_pub_ = node_.create_publisher<std_msgs::msg::Bool>("lightboard/enable", 10);
     grab_scene_enable_pub_ = node_.create_publisher<std_msgs::msg::Bool>("grab_scene/enable", 10);

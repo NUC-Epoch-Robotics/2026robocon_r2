@@ -11,11 +11,11 @@ R2DecisionNode::R2DecisionNode() : Node("r2_decision_node"), actions_(*this)
 
     // ── subscriptions ─────────────────────────────────────────
     upper_ack_sub_ = create_subscription<robot_serial::msg::Juece>(
-        "/juece_ack", 10,
+        "/juece_ack", rclcpp::SensorDataQoS(),
         std::bind(&R2DecisionNode::onUpperAck, this, _1));
 
     upper_done_sub_ = create_subscription<robot_serial::msg::Juece>(
-        "/juece_done", 10,
+        "/juece_done", rclcpp::SensorDataQoS(),
         std::bind(&R2DecisionNode::onUpperDone, this, _1));
 
     spear_exists_sub_ = create_subscription<std_msgs::msg::Bool>(
