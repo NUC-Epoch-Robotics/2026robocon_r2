@@ -344,8 +344,6 @@ private:
 
     // stair state
     bool stair_active_{false};
-    bool stair_stop_sent_{false};
-    rclcpp::TimerBase::SharedPtr stair_timer_;
 
     // arm reliability
     bool waiting_upper_ack_{false};
