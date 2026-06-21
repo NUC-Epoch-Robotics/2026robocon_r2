@@ -246,6 +246,7 @@ struct Context
     bool zone2_post_grab_nav_pending{false};
     rclcpp::Time scene_confirm_start_time{0, 0, RCL_ROS_TIME};
     rclcpp::Time entry_retract_start_time{0, 0, RCL_ROS_TIME};
+    rclcpp::Time entry_hold_start_time{0, 0, RCL_ROS_TIME};
 
     // ---- task data (computed by decision tree) ----
     std::vector<Zone2Task> zone2_tasks;
