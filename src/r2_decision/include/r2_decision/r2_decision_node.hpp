@@ -488,7 +488,6 @@ private:
     void enterSub(Context &ctx, ActionDispatcher &act);
     std::unique_ptr<TopState> handleSubEvent(Context &ctx, ActionDispatcher &act, const Event &e);
     void tickEntryGrab(Context &ctx, ActionDispatcher &act);
-    void tryEntryRetreat(Context &ctx, ActionDispatcher &act);
     void tickGrab(Context &ctx, ActionDispatcher &act);
     void handlePoint0Substep(Context &ctx, ActionDispatcher &act);
     void checkSceneTimeout(Context &ctx, ActionDispatcher &act);
