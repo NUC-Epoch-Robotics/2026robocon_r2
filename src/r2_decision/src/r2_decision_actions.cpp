@@ -301,7 +301,7 @@ void ActionDispatcher::tickReliability()
 }
 
 // ==========================================================================
-// Stair — 发1后直接发0
+// Stair — 发1后500ms发0
 // ==========================================================================
 
 void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext sc)
@@ -311,15 +311,38 @@ void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext
     stair_context_ = sc;
     stair_active_ = true;
 
-    // 发目标指令后立刻发0
     publishCmdWithArea(stair_target_cmd_);
-    publishCmdWithArea(0);
+
+    // 500ms后发0
+    stair_timer_ = node_.create_wall_timer(
+        std::chrono::milliseconds(500),
+        [this] {
+            if (stair_active_)
+            {
+                publishCmdWithArea(0);
+                stair_active_ = false;
+            }
+            if (stair_timer_)
+            {
+                stair_timer_->cancel();
+                stair_timer_.reset();
+            }
+        });
 
     (void)ctx;
 }
 
 void ActionDispatcher::stopStair()
 {
+    if (stair_timer_)
+    {
+        stair_timer_->cancel();
+        stair_timer_.reset();
+    }
+    if (stair_active_)
+    {
+        publishCmdWithArea(0);
+    }
     stair_active_ = false;
 }
 
