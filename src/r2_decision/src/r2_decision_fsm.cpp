@@ -764,7 +764,20 @@ std::unique_ptr<TopState> Zone2State::onEnter(Context &ctx, ActionDispatcher &ac
 
 std::unique_ptr<TopState> Zone2State::onTick(Context &ctx, ActionDispatcher &act)
 {
-    // 入口抓取: 完全由事件驱动 (handleSubEvent → tickEntryGrab), onTick 不介入
+    // 入口抓取: 收回等待 (step 35/65) 由 onTick 计时驱动
+    if (sub_ == Sub::ENTRY_GRAB &&
+        (ctx.entry_grab_step == 35 || ctx.entry_grab_step == 65))
+    {
+        auto elapsed = (rclcpp::Clock().now() - ctx.entry_retract_start_time).seconds();
+        if (elapsed > 0.5)
+        {
+            int next_step = (ctx.entry_grab_step == 35) ? 4 : 7;
+            RCLCPP_INFO(rclcpp::get_logger("fsm"),
+                        "EntryGrab: 收回等待完成 (%.1fs), → step %d", elapsed, next_step);
+            ctx.entry_grab_step = next_step;
+            tickEntryGrab(ctx, act);
+        }
+    }
     // 固定路线抓取: zone2_grab_step 驱动 (backoff → forward → 等 UP_JUECE)
     if (sub_ == Sub::GRAB && ctx.use_fixed_zone2_route)
         tickGrab(ctx, act);
@@ -958,15 +971,16 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
             if (ctx.entry_sucked)
                 tryEntryRetreat(ctx, act);
         }
-        // step3/6: 倒回到位 → stopGrab发is_finsh=0收回 → ++step → tickEntryGrab
+        // step3/6: 倒回到位 → stopGrab发is_finsh=0收回 → 等待500ms → step4/7
         else if (e.type == EventType::NAV_DONE && (ctx.entry_grab_step == 3 || ctx.entry_grab_step == 6))
         {
             if (!e.success)
                 RCLCPP_WARN(rclcpp::get_logger("fsm"), "EntryGrab: retreat nav failed");
-            RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 倒回到位, 收回 is_finsh=0 (step=%d)", ctx.entry_grab_step);
+            RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab: 倒回到位, 收回 is_finsh=0, 等待500ms (step=%d)", ctx.entry_grab_step);
             act.stopZone2Grab();
-            ctx.entry_grab_step += 1;
-            tickEntryGrab(ctx, act);
+            ctx.entry_retract_start_time = rclcpp::Clock().now();
+            ctx.entry_grab_step = (ctx.entry_grab_step == 3) ? 35 : 65;
+            // 不立刻调 tickEntryGrab, 由 onTick 计时 500ms 后推进到 step 4/7
         }
         // step2/5: 吸上 → 若已到达则倒回
         else if (e.type == EventType::UP_JUECE_DONE && (ctx.entry_grab_step == 2 || ctx.entry_grab_step == 5))
@@ -1265,7 +1279,8 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
  *   step 0: 导航到 approach 位置 (入口前方)
  *   step 1: 启动抓取, 导航冲向方块
  *   step 2: 等待 UP_JUECE_DONE 事件 (抓取完成)
- *   step 3: 导航撤退回 approach, 然后收起机械臂, 进入正常导航
+ *   step 3: 导航撤退回 approach, 然后收起机械臂
+ *   step 35/65: 等待 500ms 让下位机处理 is_finsh=0
  */
 void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
 {
@@ -1276,10 +1291,12 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
     //    0  nav→块1approach(1.6,0.289)          NAV_DONE           →1
     //    1  startZone2Grab(2)+nav→块1(2.0,.289) NAV_DONE(arrived)  →2
     //    2  (空等,等吸上)                       UP_JUECE+arrived   retreat→3
-    //    3  (空等,倒回nav已发)                  NAV_DONE(倒回回)    stopGrab→4
+    //    3  (空等,倒回nav已发)                  NAV_DONE(倒回回)    stopGrab→35
+    //   35  (等500ms让下位机处理is_finsh=0)     onTick超时          →4
     //    4  startZone2Grab(1)+nav→块2(2.0,1.41) NAV_DONE(arrived)  →5
     //    5  (空等,等吸上)                       UP_JUECE+arrived   retreat→6
-    //    6  (空等,倒回nav已发)                  NAV_DONE(倒回回)    stopGrab→7
+    //    6  (空等,倒回nav已发)                  NAV_DONE(倒回回)    stopGrab→65
+    //   65  (等500ms让下位机处理is_finsh=0)     onTick超时          →7
     //    7  上台阶#1 (startStair)               DOWN_JUECE         →8
     //    8  nav→转向点(3.0,1.41)走稳            NAV_DONE           →9
     //    9  顺时针转90° (qz=-0.707,qw=0.707)    NAV_DONE           →10
@@ -1315,6 +1332,9 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
     case 3:
         // 倒回 nav 已发 (tryEntryRetreat), 等倒回到位 NAV_DONE (见 handleSubEvent)
         break;
+    case 35:
+        // 倒回到位后等 500ms, 让下位机处理 is_finsh=0. 由 onTick 计时推进到 step 4
+        break;
     case 4:
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 4: is_finsh=%d + nav→块2 (%.2f,%.2f)",
                     ctx.entry_block2_is_finsh, ctx.entry_block2_x, ctx.entry_block2_y);
@@ -1328,6 +1348,9 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         break;
     case 6:
         // 倒回 nav 已发, 等倒回到位 NAV_DONE
+        break;
+    case 65:
+        // 倒回到位后等 500ms, 让下位机处理 is_finsh=0. 由 onTick 计时推进到 step 7
         break;
     // ── 上台阶 + 转向 ──
     case 7:

@@ -301,7 +301,7 @@ void ActionDispatcher::tickReliability()
 }
 
 // ==========================================================================
-// Stair
+// Stair — 单次发送
 // ==========================================================================
 
 void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext sc)
@@ -309,94 +309,54 @@ void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext
     stopStair();
     stair_target_cmd_ = target_cmd;
     stair_context_ = sc;
-    stair_phase_ = 0;
+    stair_active_ = true;
 
-    // drive via a wall timer so that we always publish at 10 Hz
-    stair_timer_ = node_.create_wall_timer(
-        std::chrono::milliseconds(100),
-        [this] { tickStair(); });
+    // 单次发送: 先发一次 0 再发目标指令
+    publishCmdWithArea(0);
+    publishCmdWithArea(stair_target_cmd_);
 
     (void)ctx;
 }
 
-void ActionDispatcher::tickStair()
-{
-    if (stair_phase_ == 0)
-    {
-        publishCmdWithArea(0);
-        stair_phase_ = 1;
-    }
-    else
-    {
-        publishCmdWithArea(stair_target_cmd_);
-    }
-}
-
 void ActionDispatcher::stopStair()
 {
-    if (stair_timer_)
-    {
-        stair_timer_->cancel();
-        stair_timer_.reset();
-    }
+    stair_active_ = false;
     publishCmdWithArea(0);
 }
 
 // ==========================================================================
-// Entry grab
+// Entry grab — 单次发送
 // ==========================================================================
 
 void ActionDispatcher::startEntryGrab(uint8_t is_finsh, Context &ctx)
 {
     stopEntryGrab();
-    entry_grab_is_finsh_ = is_finsh;
     ctx.grab_context = GrabContext::ENTRY;
-    entry_grab_timer_ = node_.create_wall_timer(
-        std::chrono::milliseconds(100),
-        [this] { tickEntryGrab(); });
-}
 
-void ActionDispatcher::tickEntryGrab()
-{
-    publishCmdWithArea(0, entry_grab_is_finsh_);
+    // 单次发送 is_finsh
+    publishCmdWithArea(0, is_finsh);
 }
 
 void ActionDispatcher::stopEntryGrab()
 {
-    if (entry_grab_timer_)
-    {
-        entry_grab_timer_->cancel();
-        entry_grab_timer_.reset();
-    }
     publishCmdWithArea(0, 0);
 }
 
 // ==========================================================================
-// Zone2 grab
+// Zone2 grab — 单次发送
 // ==========================================================================
 
 void ActionDispatcher::startZone2Grab(uint8_t is_finsh, Context &ctx)
 {
     stopZone2Grab();
-    zone2_grab_is_finsh_ = is_finsh;
     ctx.grab_context = GrabContext::ZONE2_FIXED;
-    zone2_grab_timer_ = node_.create_wall_timer(
-        std::chrono::milliseconds(100),
-        [this] { tickZone2Grab(); });
-}
 
-void ActionDispatcher::tickZone2Grab()
-{
-    publishCmdWithArea(0, zone2_grab_is_finsh_);
+    // 单次发送 is_finsh
+    publishCmdWithArea(0, is_finsh);
 }
 
 void ActionDispatcher::stopZone2Grab()
 {
-    if (zone2_grab_timer_)
-    {
-        zone2_grab_timer_->cancel();
-        zone2_grab_timer_.reset();
-    }
     publishCmdWithArea(0, 0);
 }
 

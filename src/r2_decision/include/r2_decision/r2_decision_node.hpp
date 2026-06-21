@@ -245,6 +245,7 @@ struct Context
     bool zone2_post_rotate_stairs_done{false};
     bool zone2_post_grab_nav_pending{false};
     rclcpp::Time scene_confirm_start_time{0, 0, RCL_ROS_TIME};
+    rclcpp::Time entry_retract_start_time{0, 0, RCL_ROS_TIME};
 
     // ---- task data (computed by decision tree) ----
     std::vector<Zone2Task> zone2_tasks;
@@ -294,7 +295,7 @@ public:
     // --- stair ---
     void startStair(uint8_t target_cmd, Context &ctx, StairContext sc = StairContext::NORMAL);
     void stopStair();
-    bool isStairActive() const { return stair_timer_ != nullptr; }
+    bool isStairActive() const { return stair_active_; }
 
     // --- grab ---
     void startEntryGrab(uint8_t is_finsh, Context &ctx);
@@ -327,9 +328,6 @@ private:
                           const std::string &action_name);
 
     void tickReliability();
-    void tickStair();
-    void tickEntryGrab();
-    void tickZone2Grab();
 
     rclcpp::Node &node_;
     EventSink post_event_;
@@ -343,10 +341,8 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_to_pose_client_;
 
-    // timers
-    rclcpp::TimerBase::SharedPtr stair_timer_;
-    rclcpp::TimerBase::SharedPtr entry_grab_timer_;
-    rclcpp::TimerBase::SharedPtr zone2_grab_timer_;
+    // stair active flag
+    bool stair_active_{false};
 
     // arm reliability
     bool waiting_upper_ack_{false};
@@ -379,15 +375,8 @@ private:
     bool grab_scene_enabled_{false};
 
     // stair state
-    int stair_phase_{0};
     uint8_t stair_target_cmd_{0};
     StairContext stair_context_{StairContext::NORMAL};
-
-    // entry grab state
-    uint8_t entry_grab_is_finsh_{0};
-
-    // zone2 grab state
-    uint8_t zone2_grab_is_finsh_{0};
 };
 
 // ==========================================================================
