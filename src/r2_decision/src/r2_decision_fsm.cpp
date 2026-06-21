@@ -1351,11 +1351,10 @@ std::unique_ptr<TopState> Zone2State::handleSubEvent(Context &ctx, ActionDispatc
  *    9  stopGrab(is_finsh=0) + 等10s        onTick超时          →10
  *   10  上台阶#1 (startStair)               DOWN_JUECE         →11
  *   11  顺时针转90° (qz=-0.707,qw=0.707)   NAV_DONE           →12
- *   12  nav→转向点(3.0,1.41)走稳            NAV_DONE           →13
- *   13  上台阶#2 (登到3.0,0.289)            DOWN_JUECE         →14
- *   14  逆时针转90° (qz=+0.707,qw=0.707)   NAV_DONE           →15
- *   15  上台阶#3 (startStair)               DOWN_JUECE         →16
- *   16  进 NAV_POINT 常规逐点 (task[0] approach=3.0,0.289 衔接)
+ *   12  上台阶#2 (登到3.0,0.289)            DOWN_JUECE         →13
+ *   13  逆时针转90° (qz=+0.707,qw=0.707)   NAV_DONE           →14
+ *   14  上台阶#3 (startStair)               DOWN_JUECE         →15
+ *   15  进 NAV_POINT 常规逐点 (task[0] approach=3.0,0.289 衔接)
  */
 void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
 {
@@ -1419,31 +1418,27 @@ void Zone2State::tickEntryGrab(Context &ctx, ActionDispatcher &act)
         act.startStair(1, ctx);
         break;
     case 11:
-        // 先顺时针转90° (在approach位置)
+        // 上完台阶#1已在(3.0,1.41), 原地顺时针转90°
         RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 11: 顺时针转90° @ (%.2f,%.2f)",
                     ctx.entry_rotate_x, ctx.entry_block2_y);
         act.sendNavigateWithQuat(ctx.entry_rotate_x, ctx.entry_block2_y, 0, 0, 0, -0.707, 0.707, ctx);
         break;
     case 12:
-        // 再导航到转向点走稳
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 12: nav→转向点 (%.2f,%.2f) 走稳",
-                    ctx.entry_rotate_x, ctx.entry_block2_y);
-        act.sendNavigateWithQuat(ctx.entry_rotate_x, ctx.entry_block2_y, 0, 0, 0, 0, 1, ctx);
+        // 转完直接上台阶#2, 不再导航(避免把转向转回去)
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 12: 上台阶#2 (登到 3.0,0.289)");
+        act.startStair(1, ctx);
         break;
     case 13:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 13: 上台阶#2 (登到 3.0,0.289)");
-        act.startStair(1, ctx);
-        break;
-    case 14:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 14: 逆时针转90° @ (3.0,0.289)");
+        // 上完台阶#2已在(3.0,0.289), 原地逆时针转90°
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 13: 逆时针转90° @ (3.0,0.289)");
         act.sendNavigateWithQuat(ctx.zone2_tasks[0].approach_x, ctx.zone2_tasks[0].approach_y, 0, 0, 0, 0.707, 0.707, ctx);
         break;
-    case 15:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 15: 上台阶#3");
+    case 14:
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 14: 上台阶#3");
         act.startStair(1, ctx);
         break;
-    case 16:
-        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 16: 入口完成, 进 NAV_POINT (从 task[0] approach 衔接)");
+    case 15:
+        RCLCPP_INFO(rclcpp::get_logger("fsm"), "EntryGrab 15: 入口完成, 进 NAV_POINT (从 task[0] approach 衔接)");
         ctx.entry_grab_step = 0;
         sub_ = Sub::NAV_POINT;
         enterSub(ctx, act);

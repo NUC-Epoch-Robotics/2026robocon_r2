@@ -301,7 +301,7 @@ void ActionDispatcher::tickReliability()
 }
 
 // ==========================================================================
-// Stair — 单次发送
+// Stair — 发1后3秒自动发0
 // ==========================================================================
 
 void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext sc)
@@ -310,18 +310,40 @@ void ActionDispatcher::startStair(uint8_t target_cmd, Context &ctx, StairContext
     stair_target_cmd_ = target_cmd;
     stair_context_ = sc;
     stair_active_ = true;
+    stair_stop_sent_ = false;
 
-    // 单次发送: 先发一次 0 再发目标指令
+    // 先发0再发目标指令
     publishCmdWithArea(0);
     publishCmdWithArea(stair_target_cmd_);
+
+    // 3秒后自动发0停止
+    stair_timer_ = node_.create_wall_timer(
+        std::chrono::milliseconds(3000),
+        [this] {
+            if (stair_active_ && !stair_stop_sent_)
+            {
+                stair_stop_sent_ = true;
+                publishCmdWithArea(0);
+                RCLCPP_INFO(rclcpp::get_logger("actions"), "Stair auto-stop (3s timeout)");
+            }
+        });
 
     (void)ctx;
 }
 
 void ActionDispatcher::stopStair()
 {
+    if (stair_timer_)
+    {
+        stair_timer_->cancel();
+        stair_timer_.reset();
+    }
+    if (stair_active_ && !stair_stop_sent_)
+    {
+        stair_stop_sent_ = true;
+        publishCmdWithArea(0);
+    }
     stair_active_ = false;
-    publishCmdWithArea(0);
 }
 
 // ==========================================================================

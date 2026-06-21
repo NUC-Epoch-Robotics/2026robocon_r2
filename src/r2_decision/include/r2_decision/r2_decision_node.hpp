@@ -342,8 +342,10 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_to_pose_client_;
 
-    // stair active flag
+    // stair state
     bool stair_active_{false};
+    bool stair_stop_sent_{false};
+    rclcpp::TimerBase::SharedPtr stair_timer_;
 
     // arm reliability
     bool waiting_upper_ack_{false};
