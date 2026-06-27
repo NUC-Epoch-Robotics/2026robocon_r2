@@ -48,6 +48,8 @@ def generate_launch_description():
             name='r2_decision_py',
             output='screen',
             parameters=[{
+                # ── 红蓝区 (所有坐标以蓝区为准, 红区自动镜像 Y) ──
+                'is_red_side': is_red_side,
                 # ── DT35 微调目标点 ──
                 'fine_tune_target_x': 0.32,
                 'fine_tune_target_y': 0.98,

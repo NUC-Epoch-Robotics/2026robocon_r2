@@ -77,6 +77,9 @@ class R2DecisionNode(Node):
         """从 ROS 参数加载配置."""
         cfg = self.config
 
+        # 红蓝区
+        cfg.is_red_side = self.declare_parameter('is_red_side', False).value
+
         # Zone1
         cfg.zone1_route = list(self.declare_parameter('zone1_route', [4, 5]).value)
         cfg.zone1_max_time_s = self.declare_parameter('zone1_max_time_s', 120.0).value
@@ -112,11 +115,15 @@ class R2DecisionNode(Node):
         cfg.entry_block2_y = self.declare_parameter('entry_block2_y', 1.41).value
         cfg.entry_block2_is_finsh = self.declare_parameter('entry_block2_is_finsh', 1).value
         cfg.entry_stair1_x = self.declare_parameter('entry_stair1_x', 1.8).value
+        cfg.entry_stair1_y = self.declare_parameter('entry_stair1_y', 1.41).value
         cfg.entry_rotate_x = self.declare_parameter('entry_rotate_x', 3.0).value
 
         # 出口
         cfg.mf_exit_x = self.declare_parameter('mf_exit_x', 3.2).value
         cfg.mf_exit_y = self.declare_parameter('mf_exit_y', 0.0).value
+
+        # ── 红区镜像 (一次性转换所有 Y 坐标和四元数) ──
+        cfg.mirror_for_red_side()
 
     def start(self):
         """启动决策协程."""

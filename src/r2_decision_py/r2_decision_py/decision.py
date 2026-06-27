@@ -21,6 +21,11 @@ from .fsm import FSM, Event
 log = logging.getLogger("decision")
 
 
+def _mirror_quat(qx, qy, qz, qw):
+    """Y 镜像: 四元数 (qx, qy, qz, qw) → (qx, -qy, -qz, qw)."""
+    return qx, -qy, -qz, qw
+
+
 # ==========================================================================
 # 配置 & 任务数据
 # ==========================================================================
@@ -71,6 +76,9 @@ class Zone2BlockInfo:
 @dataclass
 class Config:
     """从 ROS 参数加载的配置."""
+    # 红蓝区
+    is_red_side: bool = False
+
     # Zone1
     zone1_route: list[int] = field(default_factory=lambda: [4, 5])
     point_table: dict[int, Point] = field(default_factory=dict)
@@ -101,12 +109,52 @@ class Config:
     entry_block2_y: float = 1.41
     entry_block2_is_finsh: int = 1
     entry_stair1_x: float = 1.8
+    entry_stair1_y: float = 1.41
     entry_rotate_x: float = 3.0
 
     # 出口
     mf_exit_x: float = 3.2
     mf_exit_y: float = 0.0
     mf_exit_z: float = 0.0
+
+    def mirror_for_red_side(self):
+        """
+        红区镜像: Y 反转, 四元数 qy/qz 反转.
+
+        所有坐标在 launch 参数中以蓝区为准, 红区时调用此方法一次性转换.
+        决策逻辑完全不用管红蓝区.
+        """
+        if not self.is_red_side:
+            return  # 蓝区不需要镜像
+
+        log.info("Applying red-side mirror (Y inversion)")
+
+        # ── Zone1 点表 ──
+        for pt in self.point_table.values():
+            pt.y = -pt.y
+
+        # ── DT35 目标 ──
+        self.fine_tune_target_y = -self.fine_tune_target_y
+
+        # ── Zone2 方块坐标 ──
+        for b in self.zone2_blocks:
+            b.y = -b.y
+
+        # ── Zone2 任务 (四元数 + 坐标) ──
+        for t in self.zone2_tasks:
+            t.y = -t.y
+            t.approach_y = -t.approach_y
+            t.rotate_y = -t.rotate_y
+            t.qx, t.qy, t.qz, t.qw = _mirror_quat(t.qx, t.qy, t.qz, t.qw)
+            t.rqx, t.rqy, t.rqz, t.rqw = _mirror_quat(t.rqx, t.rqy, t.rqz, t.rqw)
+
+        # ── 入口抓取坐标 ──
+        self.entry_block0_y = -self.entry_block0_y
+        self.entry_block2_y = -self.entry_block2_y
+        self.entry_stair1_y = -self.entry_stair1_y
+
+        # ── 出口 ──
+        self.mf_exit_y = -self.mf_exit_y
 
 
 # ==========================================================================
