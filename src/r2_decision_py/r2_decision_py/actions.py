@@ -146,13 +146,13 @@ class ActionDispatcher:
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = nav_frame_id
         goal.pose.header.stamp = self.node.get_clock().now().to_msg()
-        goal.pose.pose.position.x = x
-        goal.pose.pose.position.y = y
-        goal.pose.pose.position.z = z
-        goal.pose.pose.orientation.x = qx
-        goal.pose.pose.orientation.y = qy
-        goal.pose.pose.orientation.z = qz
-        goal.pose.pose.orientation.w = qw
+        goal.pose.pose.position.x = float(x)
+        goal.pose.pose.position.y = float(y)
+        goal.pose.pose.position.z = float(z)
+        goal.pose.pose.orientation.x = float(qx)
+        goal.pose.pose.orientation.y = float(qy)
+        goal.pose.pose.orientation.z = float(qz)
+        goal.pose.pose.orientation.w = float(qw)
 
         future = self.nav_client.send_goal_async(goal)
         future.add_done_callback(self._on_nav_goal_response)
@@ -318,9 +318,9 @@ class ActionDispatcher:
 
     def publish_cmd_vel(self, linear_x: float, linear_y: float, angular_z: float = 0.0):
         msg = Twist()
-        msg.linear.x = linear_x
-        msg.linear.y = linear_y
-        msg.angular.z = angular_z
+        msg.linear.x = float(linear_x)
+        msg.linear.y = float(linear_y)
+        msg.angular.z = float(angular_z)
         self.cmd_vel_pub.publish(msg)
 
     def stop_cmd_vel(self):

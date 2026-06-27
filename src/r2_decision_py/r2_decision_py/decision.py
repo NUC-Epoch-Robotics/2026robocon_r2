@@ -21,10 +21,6 @@ from .fsm import FSM, Event
 log = logging.getLogger("decision")
 
 
-def _mirror_quat(qx, qy, qz, qw):
-    """Y 镜像: 四元数 (qx, qy, qz, qw) → (qx, -qy, -qz, qw)."""
-    return qx, -qy, -qz, qw
-
 
 # ==========================================================================
 # 配置 & 任务数据
@@ -78,6 +74,7 @@ class Config:
     """从 ROS 参数加载的配置."""
     # 红蓝区
     is_red_side: bool = False
+    turn_sign: float = 1.0  # 蓝区=+1, 红区=-1. 用于 Zone1 硬编码旋转
 
     # Zone1
     zone1_route: list[int] = field(default_factory=lambda: [4, 5])
@@ -119,15 +116,16 @@ class Config:
 
     def mirror_for_red_side(self):
         """
-        红区镜像: Y 反转, 四元数 qy/qz 反转.
+        红区镜像: 只反转 Y 坐标.
 
-        所有坐标在 launch 参数中以蓝区为准, 红区时调用此方法一次性转换.
-        决策逻辑完全不用管红蓝区.
+        坐标系不变, 四元数不变.
+        蓝区左转 → 红区右转: 由运行时坐标自然推导, 不需要在这里处理.
         """
         if not self.is_red_side:
-            return  # 蓝区不需要镜像
+            return
 
-        log.info("Applying red-side mirror (Y inversion)")
+        log.info("Applying red-side mirror (Y inversion, turn_sign=-1)")
+        self.turn_sign = -1.0
 
         # ── Zone1 点表 ──
         for pt in self.point_table.values():
@@ -140,13 +138,11 @@ class Config:
         for b in self.zone2_blocks:
             b.y = -b.y
 
-        # ── Zone2 任务 (四元数 + 坐标) ──
+        # ── Zone2 任务 (只改 Y, 四元数不变) ──
         for t in self.zone2_tasks:
             t.y = -t.y
             t.approach_y = -t.approach_y
             t.rotate_y = -t.rotate_y
-            t.qx, t.qy, t.qz, t.qw = _mirror_quat(t.qx, t.qy, t.qz, t.qw)
-            t.rqx, t.rqy, t.rqz, t.rqw = _mirror_quat(t.rqx, t.rqy, t.rqz, t.rqw)
 
         # ── 入口抓取坐标 ──
         self.entry_block0_y = -self.entry_block0_y
@@ -198,12 +194,13 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
         # ── 第一段: 走 X ──
         await fsm.nav_to(pt.x, fsm._last_nav_y, pt.z)
 
-        # ── 顺时针转 90° ──
-        state.current_yaw -= math.pi / 2
+        # ── 旋转 90° (蓝区顺时针, 红区逆时针) ──
+        state.current_yaw -= cfg.turn_sign * math.pi / 2
         await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
 
-        # ── 第二段: 走 Y ──
-        await fsm.nav_to(pt.x, pt.y, pt.z, 0, 0, -0.707, 0.707)
+        # ── 第二段: 走 Y (保持旋转后的朝向) ──
+        qz = -cfg.turn_sign * 0.707
+        await fsm.nav_to(pt.x, pt.y, pt.z, 0, 0, qz, 0.707)
 
         # ── DT35 微调 ──
         await fsm.fine_tune(
@@ -313,16 +310,18 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     log.info("EntryGrab: nav→转向点 (%.2f, %.2f)", cfg.entry_rotate_x, cfg.entry_block2_y)
     await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_block2_y)
 
-    log.info("EntryGrab: 顺时针转 90°")
-    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_block2_y, 0, 0, 0, -0.707, 0.707)
+    log.info("EntryGrab: 转 90° (蓝区顺, 红区逆)")
+    qz = -cfg.turn_sign * 0.707
+    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_block2_y, 0, 0, 0, qz, 0.707)
 
     log.info("EntryGrab: 上台阶 #2")
     await fsm.up_stairs()
 
-    log.info("EntryGrab: 逆时针转 90°")
+    log.info("EntryGrab: 转回 90°")
     if cfg.zone2_tasks:
         t = cfg.zone2_tasks[0]
-        await fsm.nav_to(t.approach_x, t.approach_y, 0, 0, 0, 0.707, 0.707)
+        qz = cfg.turn_sign * 0.707
+        await fsm.nav_to(t.approach_x, t.approach_y, 0, 0, 0, qz, 0.707)
 
     log.info("EntryGrab: 上台阶 #3")
     await fsm.up_stairs()
