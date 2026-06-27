@@ -23,7 +23,7 @@ from typing import Callable, Optional
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import SensorDataQoS
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.action import ActionClient
 
 from std_msgs.msg import Bool, UInt8, UInt8MultiArray
@@ -62,7 +62,7 @@ class ActionDispatcher:
 
         # ── publishers ──
         self.upper_cmd_pub = node.create_publisher(
-            UInt8MultiArray, '/juece', SensorDataQoS())
+            UInt8MultiArray, '/juece', QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5))
         self.spear_enable_pub = node.create_publisher(Bool, 'spearhead/enable', 10)
         self.lightboard_enable_pub = node.create_publisher(Bool, 'lightboard/enable', 10)
         self.grab_scene_enable_pub = node.create_publisher(Bool, 'grab_scene/enable', 10)

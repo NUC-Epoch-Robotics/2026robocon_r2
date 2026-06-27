@@ -14,7 +14,7 @@ import logging
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import SensorDataQoS
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from std_msgs.msg import Bool, UInt8, UInt8MultiArray
 
@@ -49,7 +49,7 @@ class R2DecisionNode(Node):
         self._load_params()
 
         # ── 订阅 (转发给 ActionDispatcher) ──
-        qos = SensorDataQoS()
+        qos = QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5)
 
         self.create_subscription(UInt8MultiArray, '/juece_ack',
                                  self.act.on_upper_ack, qos)
