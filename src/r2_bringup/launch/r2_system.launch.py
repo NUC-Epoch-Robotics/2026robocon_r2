@@ -56,8 +56,8 @@ def generate_launch_description():
                 'fine_tune_xy_threshold': 0.01,
                 'fine_tune_stable_required': 5,
                 'fine_tune_timeout_s': 15.0,
-                'fine_tune_speed_x': 0.02,
-                'fine_tune_speed_y': 0.02,
+                'fine_tune_speed_x': 0.03,
+                'fine_tune_speed_y': 0.03,
                 # ── Zone1 (已转新坐标系: 旧(x,y)→新(-y,x)) ──
                 'zone1_route': [5],
                 'zone1_point_5_x': 0.2,

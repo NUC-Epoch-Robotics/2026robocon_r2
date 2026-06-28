@@ -201,7 +201,7 @@ class FSM:
             if abs(err_x) < threshold and abs(err_y) < threshold:
                 stable_count += 1
             else:
-                stable_count = 0
+                stable_count = max(0, stable_count - 1)  # 偶尔跳出扣 1, 不归零
 
             if stable_count >= stable_required:
                 self.act.stop_cmd_vel()

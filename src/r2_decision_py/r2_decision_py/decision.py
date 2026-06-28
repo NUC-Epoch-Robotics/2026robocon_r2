@@ -245,7 +245,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             await fsm.spearhead_and_wait(pt.docking_cmd)
 
         # ── 等对接完成 (TODO: 之后改成事件驱动) ──
-        await fsm.wait(60.0)
+        await fsm.wait(5.0)
 
         # ── DOCKING_DONE: 发 zhuangtai=4, 等 DONE, 再等 5s, 再发 area 切换 ──
         act.set_hold_cmd(4)
