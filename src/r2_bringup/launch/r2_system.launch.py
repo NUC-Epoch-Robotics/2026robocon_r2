@@ -60,8 +60,8 @@ def generate_launch_description():
                 'fine_tune_speed_y': 0.05,
                 # ── Zone1 (已转新坐标系: 旧(x,y)→新(-y,x)) ──
                 'zone1_route': [5],
-                'zone1_point_5_x': 0.6,
-                'zone1_point_5_y': 0.2,
+                'zone1_point_5_x': 0.2,
+                'zone1_point_5_y': 0.6,
                 'zone1_point_5_z': -0.622,
                 'zone1_point_7_x': -1.42,
                 'zone1_point_7_y': 1.7,

@@ -194,10 +194,10 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
 
         log.info("Zone1: point %d (%.2f, %.2f)", pt.id, pt.x, pt.y)
 
-        # ── 第一段: 走 X (Y 保持当前值) ──
-        await fsm.nav_to(pt.x, fsm._last_nav_y, pt.z)
+        # ── 第一段: 走 Y (X 保持当前值) ──
+        await fsm.nav_to(fsm._last_nav_x, pt.y, pt.z)
 
-        # ── 第二段: 走 Y (X 已到位, 保持默认朝向) ──
+        # ── 第二段: 走 X (Y 已到位) ──
         await fsm.nav_to(pt.x, pt.y, pt.z)
 
         # ── DT35 微调 ──
