@@ -340,12 +340,19 @@ class ActionDispatcher:
         C++ 对应: R2DecisionNode::onUpperAck
 
         串口驱动收到下位机 0xAA 0x55 包后发布到这里:
-          xipan_status → 吸盘状态 (1=吸到块)
+          xipan_status → 吸盘状态 (1=吸到块可以走位, 2=抓取彻底完成)
           taijie_status → 台阶状态 (1=上台阶完成, 2=下台阶完成)
         """
-        # xipan_status=1 → 吸到块
+        # xipan_status=1 → 吸到了, 可以开始走下一个点 (但还不能发 is_finsh)
         if msg.xipan_status == 1:
-            self.post_event(Event("UP_JUECE_DONE"))
+            log.info("XIPAN status=1: grabbed, can start moving")
+            self.post_event(Event("XIPAN_GRABBED"))
+            return
+
+        # xipan_status=2 → 抓取彻底完成, 可以发下一个 is_finsh
+        if msg.xipan_status == 2:
+            log.info("XIPAN status=2: grab fully done, can send next is_finsh")
+            self.post_event(Event("XIPAN_DONE"))
             return
 
         # taijie_status=1/2 → 台阶完成: 先发 0, 再 post 事件

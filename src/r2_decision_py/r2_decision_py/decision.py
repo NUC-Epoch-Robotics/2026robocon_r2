@@ -151,11 +151,11 @@ class Config:
 
     # 入口抓取 (三个固定抓块点)
     grab_points: list[GrabPoint] = field(default_factory=lambda: [
-        GrabPoint(approach_x=-0.7, approach_y=1.9, grab_x=-0.7, grab_y=2.1,
+        GrabPoint(approach_x=-0.7, approach_y=1.9, grab_x=-0.7, grab_y=2.15,
                   dt35_x=0.428, dt35_y=1.516, is_finsh=2),
-        GrabPoint(approach_x=-1.9, approach_y=1.9, grab_x=-1.9, grab_y=2.1,
+        GrabPoint(approach_x=-1.9, approach_y=1.9, grab_x=-1.9, grab_y=2.15,
                   dt35_x=0.428, dt35_y=2.716, is_finsh=1),
-        GrabPoint(approach_x=-3.1, approach_y=1.9, grab_x=-3.1, grab_y=2.1,
+        GrabPoint(approach_x=-3.1, approach_y=1.9, grab_x=-3.1, grab_y=2.15,
                   dt35_x=0.428, dt35_y=3.919, is_finsh=2),
     ])
     grab_qz: float = 0.707    # 抓块时的四元数 z 分量 (蓝区)
@@ -277,21 +277,23 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     """
     入口抓取: 三个固定点依次吸块, 吸完回到台阶起始点.
 
-    流程 (每个点):
-      1. 导航到 approach 点
-      2. DT35 微调
-      3. 导航到 grab 点, 同时发 is_finsh 指令
-      4. 等吸盘回调
-      5. 退回 approach 点
+    流水线:
+      1. 导航到 approach → DT35 微调
+      2. 发 is_finsh, 导航到 grab 点
+      3. 等 XIPAN_GRABBED (status=1) → 吸到了, 开始走下一个 approach (但不发 is_finsh)
+      4. 等 XIPAN_DONE (status=2) → 彻底完成, 可以发下一个 is_finsh
     """
+
+    nav_task = None  # 后台导航任务
 
     for i, gp in enumerate(cfg.grab_points):
         log.info("EntryGrab: 块%d approach=(%.2f, %.2f) grab=(%.2f, %.2f) is_finsh=%d",
                  i, gp.approach_x, gp.approach_y, gp.grab_x, gp.grab_y, gp.is_finsh)
 
-        # ── 导航到 approach ──
-        await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
-                         0, 0, cfg.grab_qz, cfg.grab_qw)
+        # ── 等待上一个点的导航完成 (如果有) ──
+        if nav_task is not None:
+            await nav_task
+            nav_task = None
 
         # ── DT35 微调 ──
         await fsm.fine_tune(
@@ -302,22 +304,33 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
             lambda: (state.dt35_x, state.dt35_y),
         )
 
-        # ── 导航到 grab 点 + 发抓取指令 ──
+        # ── 发 is_finsh + 导航到 grab 点 ──
         act.publish_cmd(0, gp.is_finsh, 0, 2)
         await fsm.nav_to(gp.grab_x, gp.grab_y, 0,
                          0, 0, cfg.grab_qz, cfg.grab_qw)
 
-        # ── 等吸盘回调 ──
-        grab_r = await fsm.wait_event("UP_JUECE_DONE")
-        log.info("EntryGrab: 块%d grab=%s", i, grab_r.success)
+        # ── 等 XIPAN_GRABBED (status=1): 吸到了, 可以走位 ──
+        await fsm.wait_event("XIPAN_GRABBED")
+        log.info("EntryGrab: 块%d grabbed, start moving to next approach", i)
 
-        # ── 退回 approach ──
-        await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
-                         0, 0, cfg.grab_qz, cfg.grab_qw)
-        act.publish_cmd(0, 0, 0, 2)
-        log.info("EntryGrab: 块%d done", i)
+        # ── 吸到了就开始走下一个 approach (不发 is_finsh) ──
+        if i + 1 < len(cfg.grab_points):
+            nxt = cfg.grab_points[i + 1]
+            nav_task = asyncio.ensure_future(
+                fsm.nav_to(nxt.approach_x, nxt.approach_y, 0,
+                           0, 0, cfg.grab_qz, cfg.grab_qw)
+            )
 
-    # ── 三个块吸完, 回到台阶起始点 ──
+        # ── 等 XIPAN_DONE (status=2): 彻底完成 ──
+        await fsm.wait_event("XIPAN_DONE")
+        log.info("EntryGrab: 块%d grab fully done", i)
+
+    # ── 等最后一个点的导航完成 ──
+    if nav_task is not None:
+        await nav_task
+        nav_task = None
+
+    # ── 回到台阶起始点 ──
     log.info("EntryGrab: nav→stairs_start (%.2f, %.2f)", cfg.stairs_start_x, cfg.stairs_start_y)
     await fsm.nav_to(cfg.stairs_start_x, cfg.stairs_start_y, 0,
                      0, 0, cfg.grab_qz, cfg.grab_qw)
