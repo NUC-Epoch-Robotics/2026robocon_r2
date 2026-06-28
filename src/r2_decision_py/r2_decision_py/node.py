@@ -12,11 +12,14 @@ import asyncio
 import threading
 import logging
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s')
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from std_msgs.msg import Bool, UInt8, UInt8MultiArray
+from robot_serial.msg import Juece, Ack, Location
 
 from .fsm import FSM, Event
 from .actions import ActionDispatcher
@@ -48,12 +51,12 @@ class R2DecisionNode(Node):
         # ── 加载参数 ──
         self._load_params()
 
-        # ── 订阅 (转发给 ActionDispatcher) ──
+        # ── 订阅 (和 C++ 完全一致的消息类型) ──
         qos = QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5)
 
-        self.create_subscription(UInt8MultiArray, '/juece_ack',
+        self.create_subscription(Ack, '/juece_ack',
                                  self.act.on_upper_ack, qos)
-        self.create_subscription(UInt8MultiArray, '/juece_done',
+        self.create_subscription(Juece, '/juece_done',
                                  self.act.on_upper_done, qos)
         self.create_subscription(Bool, 'spearhead/exists',
                                  self.act.on_spear_exists, 10)
@@ -63,7 +66,7 @@ class R2DecisionNode(Node):
                                  self.act.on_grab_scene_ready, 10)
         self.create_subscription(UInt8, 'r2/control/button_state',
                                  self.act.on_button_state, 10)
-        self.create_subscription(UInt8MultiArray, '/dt35/location',
+        self.create_subscription(Location, '/dt35/location',
                                  self._on_dt35_location, 10)
 
         # ── asyncio 事件循环 ──
@@ -127,14 +130,17 @@ class R2DecisionNode(Node):
 
     def start(self):
         """启动决策协程."""
+        log.info("Starting FSM coroutine thread...")
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
         self._loop_thread.start()
 
     def _run_loop(self):
         asyncio.set_event_loop(self._loop)
+        log.info("Asyncio loop started, running mission...")
         self._loop.run_until_complete(
             self.fsm.run(run_mission(self.fsm, self.act, self.config, self.state))
         )
+        log.info("Mission coroutine finished")
 
     # ── 特殊回调 (需要更新 state 的) ──
 

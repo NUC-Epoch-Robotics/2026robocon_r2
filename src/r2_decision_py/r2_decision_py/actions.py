@@ -26,9 +26,10 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.action import ActionClient
 
-from std_msgs.msg import Bool, UInt8, UInt8MultiArray
+from std_msgs.msg import Bool, UInt8
 from geometry_msgs.msg import Twist
 from nav2_msgs.action import NavigateToPose
+from robot_serial.msg import Juece, Ack, Location
 
 from .fsm import Event
 
@@ -60,9 +61,9 @@ class ActionDispatcher:
         self.node = node
         self.post_event: Callable[[Event], None] = lambda e: None
 
-        # ── publishers ──
+        # ── publishers (和 C++ 完全一致的消息类型) ──
         self.upper_cmd_pub = node.create_publisher(
-            UInt8MultiArray, '/juece', QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5))
+            Juece, '/juece', QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5))
         self.spear_enable_pub = node.create_publisher(Bool, 'spearhead/enable', 10)
         self.lightboard_enable_pub = node.create_publisher(Bool, 'lightboard/enable', 10)
         self.grab_scene_enable_pub = node.create_publisher(Bool, 'grab_scene/enable', 10)
@@ -118,9 +119,12 @@ class ActionDispatcher:
 
     def _publish_juece(self, status_bit: int, is_finsh: int = 0,
                        zhuangtai: int = 0, area: int = 0):
-        """发送底层指令到 /juece topic."""
-        msg = UInt8MultiArray()
-        msg.data = [status_bit, is_finsh, zhuangtai, area]
+        """发送底层指令到 /juece topic (robot_serial/msg/Juece)."""
+        msg = Juece()
+        msg.status_bit = status_bit
+        msg.is_finsh = is_finsh
+        msg.zhuangtai = zhuangtai
+        msg.area = area
         self.upper_cmd_pub.publish(msg)
 
     def _publish_with_area(self, status_bit: int, is_finsh: int = 0, zhuangtai: int = 0):
@@ -343,33 +347,30 @@ class ActionDispatcher:
 
     def on_upper_ack(self, msg):
         """
-        /juece_ack 回调.
+        /juece_ack 回调 (robot_serial/msg/Ack: xipan_status, taijie_status).
         C++ 对应: R2DecisionNode::onUpperAck
-        """
-        zhuangtai = msg.data[2] if len(msg.data) > 2 else 0
-        is_finsh = msg.data[1] if len(msg.data) > 1 else 0
 
-        # zhuangtai=1 → 吸到块
-        if zhuangtai == 1:
+        串口驱动收到下位机 0xAA 0x55 包后发布到这里:
+          xipan_status → 吸盘状态 (1=吸到块)
+          taijie_status → 台阶状态 (1=上台阶完成, 2=下台阶完成)
+        """
+        # xipan_status=1 → 吸到块
+        if msg.xipan_status == 1:
             self.post_event(Event("UP_JUECE_DONE"))
             return
 
-        # is_finsh=1/2 → 台阶完成
-        if is_finsh in (1, 2):
+        # taijie_status=1/2 → 台阶完成
+        if msg.taijie_status in (1, 2):
             self.stop_stair()
             self.post_event(Event("DOWN_JUECE_DONE"))
             return
 
     def on_upper_done(self, msg):
         """
-        /juece_done 回调.
+        /juece_done 回调 (robot_serial/msg/Juece).
         C++ 对应: R2DecisionNode::onUpperDone
         """
-        zhuangtai = msg.data[2] if len(msg.data) > 2 else 0
-        status_bit = msg.data[0] if len(msg.data) > 0 else 0
-        is_finsh = msg.data[1] if len(msg.data) > 1 else 0
-
-        if zhuangtai != 1:
+        if msg.zhuangtai != 1:
             return
 
         # 台阶完成 → DOWN_JUECE_DONE (最高优先级)
@@ -380,13 +381,13 @@ class ActionDispatcher:
 
         # spearhead 指令完成
         if self.spearhead_active:
-            if self._handle_spearhead_done(status_bit, is_finsh != 0):
-                self.post_event(Event("ARM_DONE", success=(is_finsh != 0)))
+            if self._handle_spearhead_done(msg.status_bit, msg.is_finsh != 0):
+                self.post_event(Event("ARM_DONE", success=(msg.is_finsh != 0)))
             return
 
         # 普通机械臂指令完成
-        self._handle_arm_done(status_bit, is_finsh != 0)
-        self.post_event(Event("ARM_DONE", success=(is_finsh != 0)))
+        self._handle_arm_done(msg.status_bit, msg.is_finsh != 0)
+        self.post_event(Event("ARM_DONE", success=(msg.is_finsh != 0)))
 
     def on_spear_exists(self, msg):
         pass  # 更新状态用, 不产生事件
@@ -412,12 +413,16 @@ class ActionDispatcher:
         self.last_button_time = now_ms
 
         if val == 1:
+            log.info("Button: START pressed")
             self.post_event(Event("START_PRESSED"))
         elif val == 2:
+            log.info("Button: ZONE1_RETRY")
             self.post_event(Event("ZONE1_RETRY"))
         elif val == 3:
+            log.info("Button: ZONE2_RETRY")
             self.post_event(Event("ZONE2_RETRY"))
         elif val == 4:
+            log.info("Button: ZONE3_RETRY")
             self.post_event(Event("ZONE3_RETRY"))
 
     def on_dt35_location(self, msg):
