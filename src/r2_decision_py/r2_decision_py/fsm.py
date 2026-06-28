@@ -188,14 +188,14 @@ class FSM:
 
         while True:
             dt35_x, dt35_y = get_dt35()
-            # 与 C++ 完全一致:
-            #   err_x = dt35_x - target_x: 正=太远→前进(vx正), 负=太近→后退(vx负)
-            #   err_y = target_y - dt35_y: 正=太右→左移(vy正), 负=太左→右移(vy负)
             err_x = dt35_x - target_x
             err_y = target_y - dt35_y
 
             vx = speed_x * (1 if err_x > 0 else -1) if abs(err_x) > threshold else 0.0
             vy = speed_y * (1 if err_y > 0 else -1) if abs(err_y) > threshold else 0.0
+
+            log.info("FINE_TUNE dt35=(%.3f,%.3f) target=(%.3f,%.3f) err=(%.3f,%.3f) vel=(%.3f,%.3f)",
+                     dt35_x, dt35_y, target_x, target_y, err_x, err_y, vx, vy)
             self.act.publish_cmd_vel(vx, vy)
 
             if abs(err_x) < threshold and abs(err_y) < threshold:

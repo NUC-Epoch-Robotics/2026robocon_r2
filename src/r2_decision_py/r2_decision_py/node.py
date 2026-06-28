@@ -67,7 +67,7 @@ class R2DecisionNode(Node):
         self.create_subscription(UInt8, 'r2/control/button_state',
                                  self.act.on_button_state, 10)
         self.create_subscription(Location, '/dt35/location',
-                                 self._on_dt35_location, 10)
+                                 self._on_dt35_location, qos)
 
         # ── asyncio 事件循环 ──
         self._loop = asyncio.new_event_loop()
