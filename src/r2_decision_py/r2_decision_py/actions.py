@@ -99,7 +99,7 @@ class ActionDispatcher:
 
         # ── 台阶 ──
         self.stair_active = False
-        self.stair_timer: Optional[asyncio.TimerHandle] = None
+        self.pending_stair_cmd = 0
 
         # ── 相机状态 ──
         self.spear_camera_enabled = False
@@ -240,32 +240,21 @@ class ActionDispatcher:
 
     def start_stair(self, cmd: int):
         """
-        发台阶指令, 500ms 后自动发 0.
+        发台阶指令, 等下位机回调后才发 0.
         cmd=1 上台阶, cmd=2 下台阶.
         """
         self.stop_stair()
         self.stair_active = True
+        self.pending_stair_cmd = cmd
         self._publish_with_area(cmd)
-        log.info("STAIR cmd=%d", cmd)
-
-        # 500ms 后自动发 0
-        loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else None
-        if loop:
-            self.stair_timer = loop.call_later(0.5, self._auto_stop_stair)
-
-    def _auto_stop_stair(self):
-        if self.stair_active:
-            self._publish_with_area(0)
-            self.stair_active = False
-        self.stair_timer = None
+        log.info("STAIR cmd=%d (waiting callback)", cmd)
 
     def stop_stair(self):
-        if self.stair_timer:
-            self.stair_timer.cancel()
-            self.stair_timer = None
+        """清台阶状态, 发 0."""
         if self.stair_active:
             self._publish_with_area(0)
         self.stair_active = False
+        self.pending_stair_cmd = 0
 
     # ==================================================================
     # 抓取
@@ -359,9 +348,10 @@ class ActionDispatcher:
             self.post_event(Event("UP_JUECE_DONE"))
             return
 
-        # taijie_status=1/2 → 台阶完成
+        # taijie_status=1/2 → 台阶完成: 先发 0, 再 post 事件
         if msg.taijie_status in (1, 2):
-            self.stop_stair()
+            log.info("STAIR callback: taijie_status=%d, sending 0", msg.taijie_status)
+            self.stop_stair()   # 发 status_bit=0
             self.post_event(Event("DOWN_JUECE_DONE"))
             return
 

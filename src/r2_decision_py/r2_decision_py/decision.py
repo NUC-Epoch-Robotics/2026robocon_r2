@@ -36,6 +36,18 @@ class Point:
 
 
 @dataclass
+class GrabPoint:
+    """二区入口抓取点."""
+    approach_x: float = 0.0
+    approach_y: float = 0.0
+    grab_x: float = 0.0
+    grab_y: float = 0.0
+    dt35_x: float = 0.0
+    dt35_y: float = 0.0
+    is_finsh: int = 0
+
+
+@dataclass
 class Zone2Task:
     id: int
     x: float
@@ -105,10 +117,13 @@ class Config:
             t.approach_y = -t.approach_y
             t.rotate_y = -t.rotate_y
 
-        # ── 入口抓取坐标 ──
-        self.entry_block0_y = -self.entry_block0_y
-        self.entry_block2_y = -self.entry_block2_y
-        self.entry_stair1_y = -self.entry_stair1_y
+        # ── 入口抓取坐标 (只镜像 Y, DT35 不镜像) ──
+        for gp in self.grab_points:
+            gp.approach_y = -gp.approach_y
+            gp.grab_y = -gp.grab_y
+
+        # ── 台阶起始点 ──
+        self.stairs_start_y = -self.stairs_start_y
 
         # ── 出口 ──
         self.mf_exit_y = -self.mf_exit_y
@@ -134,18 +149,21 @@ class Config:
     zone2_fixed_backoff: float = 0.1
     scene_confirm_timeout_s: float = 5.0
 
-    # 入口抓取
-    entry_approach_x: float = 1.6
-    entry_block0_x: float = 2.0
-    entry_block0_y: float = 0.289
-    entry_block0_is_finsh: int = 2
-    entry_block2_x: float = 3.0
-    entry_block2_y: float = 1.41
-    entry_block2_is_finsh: int = 1
-    entry_stair1_x: float = 1.8
-    entry_stair1_y: float = 1.41
-    entry_rotate_x: float = 3.0
-    entry_rotate_y: float = 1.41
+    # 入口抓取 (三个固定抓块点)
+    grab_points: list[GrabPoint] = field(default_factory=lambda: [
+        GrabPoint(approach_x=-0.7, approach_y=1.9, grab_x=-0.7, grab_y=2.1,
+                  dt35_x=0.428, dt35_y=1.516, is_finsh=2),
+        GrabPoint(approach_x=-1.9, approach_y=1.9, grab_x=-1.9, grab_y=2.1,
+                  dt35_x=0.428, dt35_y=2.716, is_finsh=1),
+        GrabPoint(approach_x=-3.1, approach_y=1.9, grab_x=-3.1, grab_y=2.1,
+                  dt35_x=0.428, dt35_y=3.919, is_finsh=2),
+    ])
+    grab_qz: float = 0.707    # 抓块时的四元数 z 分量 (蓝区)
+    grab_qw: float = 0.707    # 抓块时的四元数 w 分量
+
+    # 台阶起始点 (三个块吸完后回到这里)
+    stairs_start_x: float = -1.9
+    stairs_start_y: float = 1.9
 
     # 出口
     mf_exit_x: float = 3.2
@@ -226,8 +244,8 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             act.set_hold_cmd(pt.docking_cmd)
             await fsm.spearhead_and_wait(pt.docking_cmd)
 
-        # ── 等 5 秒 ──
-        await fsm.wait(5.0)
+        # ── 等对接完成 (TODO: 之后改成事件驱动) ──
+        await fsm.wait(60.0)
 
         # ── DOCKING_DONE: 发 zhuangtai=4, 等 DONE, 再等 5s, 再发 area 切换 ──
         act.set_hold_cmd(4)
@@ -257,72 +275,52 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
 
 async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     """
-    入口抓取: 抓两个块 + 上三段台阶 + 转向
+    入口抓取: 三个固定点依次吸块, 吸完回到台阶起始点.
 
-    C++ 对应: tickEntryGrab 16 步 (约 200 行) → 这里约 60 行
+    流程 (每个点):
+      1. 导航到 approach 点
+      2. DT35 微调
+      3. 导航到 grab 点, 同时发 is_finsh 指令
+      4. 等吸盘回调
+      5. 退回 approach 点
     """
 
-    # ── 块 1: 导航到 approach ──
-    log.info("EntryGrab: nav→approach (%.2f, %.2f)", cfg.entry_approach_x, cfg.entry_block0_y)
-    await fsm.nav_to(cfg.entry_approach_x, cfg.entry_block0_y)
+    for i, gp in enumerate(cfg.grab_points):
+        log.info("EntryGrab: 块%d approach=(%.2f, %.2f) grab=(%.2f, %.2f) is_finsh=%d",
+                 i, gp.approach_x, gp.approach_y, gp.grab_x, gp.grab_y, gp.is_finsh)
 
-    # ── 块 1: 抓取 + 导航并行 ──
-    log.info("EntryGrab: 块1 grab(is_finsh=%d) + nav 并行", cfg.entry_block0_is_finsh)
-    act.start_zone2_grab(cfg.entry_block0_is_finsh)
-    nav_r, grab_r = await asyncio.gather(
-        fsm.nav_to(cfg.entry_block0_x, cfg.entry_block0_y),
-        fsm.wait_event("UP_JUECE_DONE"),
-    )
-    log.info("EntryGrab: 块1 nav=%s grab=%s", nav_r.success, grab_r.success)
+        # ── 导航到 approach ──
+        await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
+                         0, 0, cfg.grab_qz, cfg.grab_qw)
 
-    # ── 块 1: 稳固 + 倒回 ──
-    await fsm.wait(10.0)
-    log.info("EntryGrab: 块1 倒回")
-    await fsm.nav_to(cfg.entry_approach_x, cfg.entry_block0_y)
-    act.stop_zone2_grab()
-    await fsm.wait(10.0)
+        # ── DT35 微调 ──
+        await fsm.fine_tune(
+            gp.dt35_x, gp.dt35_y,
+            cfg.fine_tune_xy_threshold,
+            cfg.fine_tune_speed_x, cfg.fine_tune_speed_y,
+            cfg.fine_tune_stable_required, cfg.fine_tune_timeout_s,
+            lambda: (state.dt35_x, state.dt35_y),
+        )
 
-    # ── 块 2: 同样流程 ──
-    log.info("EntryGrab: nav→块2 approach (%.2f, %.2f)", cfg.entry_stair1_x, cfg.entry_block2_y)
-    await fsm.nav_to(cfg.entry_stair1_x, cfg.entry_block2_y)
+        # ── 导航到 grab 点 + 发抓取指令 ──
+        act.publish_cmd(0, gp.is_finsh, 0, 2)
+        await fsm.nav_to(gp.grab_x, gp.grab_y, 0,
+                         0, 0, cfg.grab_qz, cfg.grab_qw)
 
-    log.info("EntryGrab: 块2 grab(is_finsh=%d) + nav 并行", cfg.entry_block2_is_finsh)
-    act.start_zone2_grab(cfg.entry_block2_is_finsh)
-    nav_r, grab_r = await asyncio.gather(
-        fsm.nav_to(cfg.entry_block2_x, cfg.entry_block2_y),
-        fsm.wait_event("UP_JUECE_DONE"),
-    )
-    log.info("EntryGrab: 块2 nav=%s grab=%s", nav_r.success, grab_r.success)
+        # ── 等吸盘回调 ──
+        grab_r = await fsm.wait_event("UP_JUECE_DONE")
+        log.info("EntryGrab: 块%d grab=%s", i, grab_r.success)
 
-    await fsm.wait(10.0)
-    log.info("EntryGrab: 块2 倒回")
-    await fsm.nav_to(cfg.entry_stair1_x, cfg.entry_block2_y)
-    act.stop_zone2_grab()
-    await fsm.wait(10.0)
+        # ── 退回 approach ──
+        await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
+                         0, 0, cfg.grab_qz, cfg.grab_qw)
+        act.publish_cmd(0, 0, 0, 2)
+        log.info("EntryGrab: 块%d done", i)
 
-    # ── 台阶 + 转向 ──
-    log.info("EntryGrab: 上台阶 #1")
-    await fsm.up_stairs()
-
-    log.info("EntryGrab: nav→转向点 (%.2f, %.2f)", cfg.entry_rotate_x, cfg.entry_rotate_y)
-    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_rotate_y)
-
-    log.info("EntryGrab: 转 90° (蓝区顺, 红区逆)")
-    qz = -cfg.turn_sign * 0.707
-    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_rotate_y, 0, 0, 0, qz, 0.707)
-
-    log.info("EntryGrab: 上台阶 #2")
-    await fsm.up_stairs()
-
-    log.info("EntryGrab: 转回 90°")
-    if cfg.zone2_tasks:
-        t = cfg.zone2_tasks[0]
-        qz = cfg.turn_sign * 0.707
-        await fsm.nav_to(t.approach_x, t.approach_y, 0, 0, 0, qz, 0.707)
-
-    log.info("EntryGrab: 上台阶 #3")
-    await fsm.up_stairs()
-
+    # ── 三个块吸完, 回到台阶起始点 ──
+    log.info("EntryGrab: nav→stairs_start (%.2f, %.2f)", cfg.stairs_start_x, cfg.stairs_start_y)
+    await fsm.nav_to(cfg.stairs_start_x, cfg.stairs_start_y, 0,
+                     0, 0, cfg.grab_qz, cfg.grab_qw)
     log.info("EntryGrab: 完成")
 
 
@@ -395,39 +393,18 @@ async def zone2(fsm: FSM, act, cfg: Config, state: State):
     """
     二区完整流程.
 
-    C++ 对应: Zone2State (~600 行) → 这里 ~120 行
+    1. 入口抓取: 三个固定点依次吸块
+    2. 回到台阶起始点, 上台阶进入梅花林
+    3. 按 zone2_tasks 逐点处理 (台阶/抓取)
     """
-    if not cfg.zone2_tasks:
-        log.warning("Zone2: no tasks, done")
-        return
 
-    log.info("Zone2: %d tasks", len(cfg.zone2_tasks))
+    # ── 入口抓取 (三个固定点) ──
+    await entry_grab(fsm, act, cfg, state)
 
-    # ── 入口抓取 ──
-    if cfg.use_fixed_route:
-        await entry_grab(fsm, act, cfg, state)
-
-    # ── 逐点处理 ──
-    for idx, task in enumerate(cfg.zone2_tasks):
-        if cfg.use_fixed_route:
-            # 导航
-            has_approach = (task.approach_x != 0.0 or task.approach_y != 0.0)
-            if has_approach:
-                await fsm.nav_to(task.approach_x, task.approach_y, task.z,
-                                 task.qx, task.qy, task.qz, task.qw)
-                await fsm.nav_to(task.x, task.y, task.z,
-                                 task.qx, task.qy, task.qz, task.qw)
-            else:
-                await fsm.nav_to(task.x, task.y, task.z,
-                                 task.qx, task.qy, task.qz, task.qw)
-
-            # 抓取
-            if task.grab_is_finsh != 0:
-                if task.id == 0:
-                    await zone2_grab_fixed(fsm, act, task, cfg)
-                    await point0_sequence(fsm, act, task)
-                else:
-                    await zone2_grab_fixed(fsm, act, task, cfg)
+    # ── 上台阶进入梅花林 ──
+    if cfg.zone2_tasks:
+        for idx, task in enumerate(cfg.zone2_tasks):
+            log.info("Zone2 task %d: stair=%d", idx, task.stair_cmd)
 
             # 台阶
             if task.stair_cmd == 1:
@@ -446,39 +423,6 @@ async def zone2(fsm: FSM, act, cfg: Config, state: State):
                 ry = task.rotate_y if task.rotate_y != 0.0 else task.y
                 await fsm.nav_to(rx, ry, task.z, task.rqx, task.rqy, task.rqz, task.rqw)
 
-        else:
-            # ── 动态路线 ──
-            await fsm.nav_to(task.x, task.y, task.z, task.qx, task.qy, task.qz, task.qw)
-
-            if task.grab_adjacent_block >= 0:
-                adj = task.grab_adjacent_block
-                dx = state.zone2_blocks[adj].x - task.x
-                dy = state.zone2_blocks[adj].y - task.y
-                yaw = math.atan2(dy, dx)
-                await fsm.rotate_to(task.x, task.y, yaw)
-                result = await fsm.arm_and_wait(task.grab_is_finsh)
-                if not result.success:
-                    log.warning("Zone2 arm failed, retry once")
-                    await fsm.arm_and_wait(task.grab_is_finsh)
-            else:
-                act.enable_grab_scene(True, task.grab_scene)
-                scene_r = await fsm.wait_event("SCENE_READY", timeout=cfg.scene_confirm_timeout_s)
-                act.enable_grab_scene(False)
-                if scene_r.success:
-                    result = await fsm.arm_and_wait(task.arm_command)
-                    if not result.success:
-                        log.warning("Zone2 arm failed, retry once")
-                        await fsm.arm_and_wait(task.arm_command)
-                else:
-                    log.warning("Zone2: scene timeout, skip block %d", task.id)
-                    continue
-
-            if task.stair_cmd == 1:
-                await fsm.up_stairs()
-            elif task.stair_cmd == 2:
-                await fsm.down_stairs()
-
-    act.enable_grab_scene(False)
     log.info("Zone2: FINISH")
 
 

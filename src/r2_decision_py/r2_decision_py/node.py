@@ -109,18 +109,13 @@ class R2DecisionNode(Node):
         cfg.zone2_fixed_backoff = self.declare_parameter('zone2_fixed_backoff', 0.1).value
         cfg.scene_confirm_timeout_s = self.declare_parameter('scene_confirm_timeout_s', 5.0).value
 
-        # 入口抓取
-        cfg.entry_approach_x = self.declare_parameter('entry_approach_x', 1.6).value
-        cfg.entry_block0_x = self.declare_parameter('entry_block0_x', 2.0).value
-        cfg.entry_block0_y = self.declare_parameter('entry_block0_y', 0.289).value
-        cfg.entry_block0_is_finsh = self.declare_parameter('entry_block0_is_finsh', 2).value
-        cfg.entry_block2_x = self.declare_parameter('entry_block2_x', 3.0).value
-        cfg.entry_block2_y = self.declare_parameter('entry_block2_y', 1.41).value
-        cfg.entry_block2_is_finsh = self.declare_parameter('entry_block2_is_finsh', 1).value
-        cfg.entry_stair1_x = self.declare_parameter('entry_stair1_x', 1.8).value
-        cfg.entry_stair1_y = self.declare_parameter('entry_stair1_y', 1.41).value
-        cfg.entry_rotate_x = self.declare_parameter('entry_rotate_x', 3.0).value
-        cfg.entry_rotate_y = self.declare_parameter('entry_rotate_y', 1.41).value
+        # 入口抓取 — 默认值已在 GrabPoint 数据类中定义, 此处可覆盖
+        cfg.grab_qz = self.declare_parameter('grab_qz', 0.707).value
+        cfg.grab_qw = self.declare_parameter('grab_qw', 0.707).value
+
+        # 台阶起始点
+        cfg.stairs_start_x = self.declare_parameter('stairs_start_x', -1.9).value
+        cfg.stairs_start_y = self.declare_parameter('stairs_start_y', 1.9).value
 
         # 出口
         cfg.mf_exit_x = self.declare_parameter('mf_exit_x', 3.2).value
