@@ -93,8 +93,7 @@ class Config:
         for pt in self.point_table.values():
             pt.y = -pt.y
 
-        # ── DT35 目标 ──
-        self.fine_tune_target_y = -self.fine_tune_target_y
+        # ── DT35 目标: 不镜像, 传感器读数不随红蓝区变 ──
 
         # ── Zone2 方块坐标 ──
         for b in self.zone2_blocks:

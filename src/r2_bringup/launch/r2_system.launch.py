@@ -50,9 +50,9 @@ def generate_launch_description():
             parameters=[{
                 # ── 红蓝区 (所有坐标以蓝区为准, 红区自动镜像 Y) ──
                 'is_red_side': is_red_side,
-                # ── DT35 微调目标点 (已转新坐标系) ──
-                'fine_tune_target_x': -0.96,
-                'fine_tune_target_y': 0.34,
+                # ── DT35 微调目标点 (传感器读数, 不随坐标系旋转) ──
+                'fine_tune_target_x': 0.34,
+                'fine_tune_target_y': 0.96,
                 'fine_tune_xy_threshold': 0.01,
                 'fine_tune_stable_required': 5,
                 'fine_tune_timeout_s': 15.0,
