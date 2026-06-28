@@ -120,12 +120,13 @@ class R2DecisionNode(Node):
         cfg.entry_stair1_x = self.declare_parameter('entry_stair1_x', 1.8).value
         cfg.entry_stair1_y = self.declare_parameter('entry_stair1_y', 1.41).value
         cfg.entry_rotate_x = self.declare_parameter('entry_rotate_x', 3.0).value
+        cfg.entry_rotate_y = self.declare_parameter('entry_rotate_y', 1.41).value
 
         # 出口
         cfg.mf_exit_x = self.declare_parameter('mf_exit_x', 3.2).value
         cfg.mf_exit_y = self.declare_parameter('mf_exit_y', 0.0).value
 
-        # ── 红区镜像 (一次性转换所有 Y 坐标和四元数) ──
+        # ── 红区镜像 (一次性转换) ──
         cfg.mirror_for_red_side()
 
     def start(self):

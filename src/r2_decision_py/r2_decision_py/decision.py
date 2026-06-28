@@ -74,45 +74,7 @@ class Config:
     """从 ROS 参数加载的配置."""
     # 红蓝区
     is_red_side: bool = False
-    turn_sign: float = 1.0  # 蓝区=+1, 红区=-1. 用于 Zone1 硬编码旋转
-
-    # Zone1
-    zone1_route: list[int] = field(default_factory=lambda: [4, 5])
-    point_table: dict[int, Point] = field(default_factory=dict)
-    zone1_max_time_s: float = 120.0
-
-    # DT35 微调
-    fine_tune_target_x: float = 0.0
-    fine_tune_target_y: float = 0.0
-    fine_tune_xy_threshold: float = 0.01
-    fine_tune_speed_x: float = 0.05
-    fine_tune_speed_y: float = 0.05
-    fine_tune_stable_required: int = 5
-    fine_tune_timeout_s: float = 15.0
-
-    # Zone2
-    zone2_blocks: list[Zone2BlockInfo] = field(default_factory=lambda: [Zone2BlockInfo() for _ in range(12)])
-    zone2_tasks: list[Zone2Task] = field(default_factory=list)
-    use_fixed_route: bool = True
-    zone2_fixed_backoff: float = 0.1
-    scene_confirm_timeout_s: float = 5.0
-
-    # 入口抓取
-    entry_approach_x: float = 1.6
-    entry_block0_x: float = 2.0
-    entry_block0_y: float = 0.289
-    entry_block0_is_finsh: int = 2
-    entry_block2_x: float = 3.0
-    entry_block2_y: float = 1.41
-    entry_block2_is_finsh: int = 1
-    entry_stair1_x: float = 1.8
-    entry_stair1_y: float = 1.41
-    entry_rotate_x: float = 3.0
-
-    # 出口
-    mf_exit_x: float = 3.2
-    mf_exit_y: float = 0.0
-    mf_exit_z: float = 0.0
+    turn_sign: float = 1.0  # 蓝区=+1, 红区=-1. 用于硬编码旋转
 
     def mirror_for_red_side(self):
         """
@@ -152,6 +114,45 @@ class Config:
         # ── 出口 ──
         self.mf_exit_y = -self.mf_exit_y
 
+    # Zone1
+    zone1_route: list[int] = field(default_factory=lambda: [4, 5])
+    point_table: dict[int, Point] = field(default_factory=dict)
+    zone1_max_time_s: float = 120.0
+
+    # DT35 微调
+    fine_tune_target_x: float = 0.0
+    fine_tune_target_y: float = 0.0
+    fine_tune_xy_threshold: float = 0.01
+    fine_tune_speed_x: float = 0.05
+    fine_tune_speed_y: float = 0.05
+    fine_tune_stable_required: int = 5
+    fine_tune_timeout_s: float = 15.0
+
+    # Zone2
+    zone2_blocks: list[Zone2BlockInfo] = field(default_factory=lambda: [Zone2BlockInfo() for _ in range(12)])
+    zone2_tasks: list[Zone2Task] = field(default_factory=list)
+    use_fixed_route: bool = True
+    zone2_fixed_backoff: float = 0.1
+    scene_confirm_timeout_s: float = 5.0
+
+    # 入口抓取
+    entry_approach_x: float = 1.6
+    entry_block0_x: float = 2.0
+    entry_block0_y: float = 0.289
+    entry_block0_is_finsh: int = 2
+    entry_block2_x: float = 3.0
+    entry_block2_y: float = 1.41
+    entry_block2_is_finsh: int = 1
+    entry_stair1_x: float = 1.8
+    entry_stair1_y: float = 1.41
+    entry_rotate_x: float = 3.0
+    entry_rotate_y: float = 1.41
+
+    # 出口
+    mf_exit_x: float = 3.2
+    mf_exit_y: float = 0.0
+    mf_exit_z: float = 0.0
+
 
 # ==========================================================================
 # 运行时状态
@@ -177,7 +178,9 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
     """
     一区完整流程.
 
-    C++ 对应: Zone1State (约 500 行) → 这里约 80 行
+    新流程 (坐标系已旋转90°):
+      走X → 走Y → DT35微调 → 抓矛头 → 转180° → 对接 → 收尾
+    不再需要中间转90°.
     """
     state.area = 1
     act.publish_cmd(0, 0, 0, 1)
@@ -191,16 +194,11 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
 
         log.info("Zone1: point %d (%.2f, %.2f)", pt.id, pt.x, pt.y)
 
-        # ── 第一段: 走 X ──
+        # ── 第一段: 走 X (Y 保持当前值) ──
         await fsm.nav_to(pt.x, fsm._last_nav_y, pt.z)
 
-        # ── 旋转 90° (蓝区顺时针, 红区逆时针) ──
-        state.current_yaw -= cfg.turn_sign * math.pi / 2
-        await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
-
-        # ── 第二段: 走 Y (保持旋转后的朝向) ──
-        qz = -cfg.turn_sign * 0.707
-        await fsm.nav_to(pt.x, pt.y, pt.z, 0, 0, qz, 0.707)
+        # ── 第二段: 走 Y (X 已到位, 保持默认朝向) ──
+        await fsm.nav_to(pt.x, pt.y, pt.z)
 
         # ── DT35 微调 ──
         await fsm.fine_tune(
@@ -307,12 +305,12 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     log.info("EntryGrab: 上台阶 #1")
     await fsm.up_stairs()
 
-    log.info("EntryGrab: nav→转向点 (%.2f, %.2f)", cfg.entry_rotate_x, cfg.entry_block2_y)
-    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_block2_y)
+    log.info("EntryGrab: nav→转向点 (%.2f, %.2f)", cfg.entry_rotate_x, cfg.entry_rotate_y)
+    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_rotate_y)
 
     log.info("EntryGrab: 转 90° (蓝区顺, 红区逆)")
     qz = -cfg.turn_sign * 0.707
-    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_block2_y, 0, 0, 0, qz, 0.707)
+    await fsm.nav_to(cfg.entry_rotate_x, cfg.entry_rotate_y, 0, 0, 0, qz, 0.707)
 
     log.info("EntryGrab: 上台阶 #2")
     await fsm.up_stairs()

@@ -50,40 +50,43 @@ def generate_launch_description():
             parameters=[{
                 # ── 红蓝区 (所有坐标以蓝区为准, 红区自动镜像 Y) ──
                 'is_red_side': is_red_side,
-                # ── DT35 微调目标点 ──
-                'fine_tune_target_x': 0.32,
-                'fine_tune_target_y': 0.98,
+                # ── DT35 微调目标点 (已转新坐标系) ──
+                'fine_tune_target_x': -0.96,
+                'fine_tune_target_y': 0.34,
                 'fine_tune_xy_threshold': 0.01,
                 'fine_tune_stable_required': 5,
                 'fine_tune_timeout_s': 15.0,
                 'fine_tune_speed_x': 0.05,
                 'fine_tune_speed_y': 0.05,
-                # ── Zone1 ──
+                # ── Zone1 (已转新坐标系: 旧(x,y)→新(-y,x)) ──
                 'zone1_route': [5],
-                'zone1_point_5_x': 0.451,
-                'zone1_point_5_y': -0.838,
+                'zone1_point_5_x': 0.6,
+                'zone1_point_5_y': 0.2,
                 'zone1_point_5_z': -0.622,
-                'zone1_point_7_x': 1.7,
-                'zone1_point_7_y': 1.42,
+                'zone1_point_7_x': -1.42,
+                'zone1_point_7_y': 1.7,
                 'zone1_point_7_z': -0.622,
-                'zone1_point_8_x': 1.9,
-                'zone1_point_8_y': 1.42,
+                'zone1_point_8_x': -1.42,
+                'zone1_point_8_y': 1.9,
                 'zone1_point_8_z': -0.622,
-                # ── Zone2 ──
+                # ── Zone2 (已转新坐标系) ──
                 'use_fixed_route': True,
                 # 入口抓取
-                'entry_approach_x': 1.6,
-                'entry_block0_x': 2.0,
-                'entry_block0_y': 0.289,
+                'entry_approach_x': 0.0,
+                'entry_approach_y': 1.6,
+                'entry_block0_x': -0.289,
+                'entry_block0_y': 2.0,
                 'entry_block0_is_finsh': 2,
-                'entry_block2_x': 2.0,
-                'entry_block2_y': 1.41,
+                'entry_block2_x': -1.41,
+                'entry_block2_y': 2.0,
                 'entry_block2_is_finsh': 1,
-                'entry_stair1_x': 1.8,
-                'entry_rotate_x': 3.0,
+                'entry_stair1_x': -1.41,
+                'entry_stair1_y': 1.8,
+                'entry_rotate_x': -1.41,
+                'entry_rotate_y': 3.0,
                 # 出口
-                'mf_exit_x': 7.5,
-                'mf_exit_y': 0.289,
+                'mf_exit_x': -0.289,
+                'mf_exit_y': 7.5,
             }],
         ),
 
