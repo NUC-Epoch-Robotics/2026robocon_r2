@@ -153,7 +153,7 @@ class Config:
     ])
     grab_qz: float = 0.707    # 抓块时的四元数 z 分量 (蓝区)
     grab_qw: float = 0.707    # 抓块时的四元数 w 分量
-    grab_forward_speed: float = 0.1  # 发 is_finsh 后持续前进的 Y 速度 (蓝区正, 红区自动取反)
+    grab_forward_speed: float = 0.1  # 发 is_finsh 后持续前进的 X 速度
 
     # 台阶起始点 (三个块吸完后回到这里)
     stairs_start_x: float = -1.9
@@ -282,9 +282,6 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     """
 
     nav_task = None
-    # 前进速度: 蓝区正, 红区负
-    forward_speed = cfg.grab_forward_speed if not cfg.is_red_side else -cfg.grab_forward_speed
-
     for i, gp in enumerate(cfg.grab_points):
         log.info("EntryGrab: 块%d approach=(%.2f, %.2f) dt35=(%.3f, %.3f) is_finsh=%d",
                  i, gp.approach_x, gp.approach_y, gp.dt35_x, gp.dt35_y, gp.is_finsh)
@@ -306,11 +303,12 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
             lambda: (state.dt35_x, state.dt35_y),
         )
 
-        # ── 发 is_finsh + 开始持续前进 ──
+        # ── 发 is_finsh + 开始持续前进 (+X) ──
+        #  第一个点直接发; 后续点: 等上一个 status=2 → 发0 → 再发 is_finsh
         act.publish_cmd(0, gp.is_finsh, 0, 2)
-        act.publish_cmd_vel(0.0, forward_speed)
-        log.info("EntryGrab: 块%d is_finsh=%d sent, moving forward vy=%.3f",
-                 i, gp.is_finsh, forward_speed)
+        act.publish_cmd_vel(cfg.grab_forward_speed, 0.0)
+        log.info("EntryGrab: 块%d is_finsh=%d sent, moving forward vx=%.3f",
+                 i, gp.is_finsh, cfg.grab_forward_speed)
 
         # ── 等 XIPAN_GRABBED (status=1): 吸到了, 停车 ──
         await fsm.wait_event("XIPAN_GRABBED")
@@ -328,6 +326,11 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
         # ── 等 XIPAN_DONE (status=2): 彻底完成 ──
         await fsm.wait_event("XIPAN_DONE")
         log.info("EntryGrab: 块%d done", i)
+
+        # ── 下一个点需要先发 0 再发 is_finsh, 在循环开头处理 ──
+        if i + 1 < len(cfg.grab_points):
+            act.publish_cmd(0, 0, 0, 2)
+            log.info("EntryGrab: sent is_finsh=0 before next point")
 
     # ── 回到台阶起始点 ──
     if nav_task is not None:
