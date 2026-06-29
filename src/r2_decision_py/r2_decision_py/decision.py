@@ -116,12 +116,7 @@ class Config:
             t.approach_y = -t.approach_y
             t.rotate_y = -t.rotate_y
 
-        # ── 入口抓取坐标 (只镜像 Y, DT35 不镜像) ──
-        for gp in self.grab_points:
-            gp.approach_y = -gp.approach_y
-
-        # ── 台阶起始点 ──
-        self.stairs_start_y = -self.stairs_start_y
+        # ── 入口抓取坐标 / 台阶起始点: 红区已在 node.py 直接设好, 不镜像 ──
 
         # ── 出口 ──
         self.mf_exit_y = -self.mf_exit_y
@@ -235,7 +230,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             if not result.success:
                 log.warning("Zone1 grab failed after retry, continue")
 
-        await fsm.wait(1.0)  # 等抓取动作完成, 避免立刻转向时矛头还没收回
+        await fsm.wait(2.0)  # 等抓取动作完成, 避免立刻转向时矛头还没收回
 
         # ── 转 180° ──
         state.current_yaw += math.pi

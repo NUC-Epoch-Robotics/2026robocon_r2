@@ -127,6 +127,8 @@ class R2DecisionNode(Node):
             ]
             cfg.stairs_start_x = -2.0
             cfg.stairs_start_y = -2.5
+            cfg.grab_qz = 0.707
+            cfg.grab_qw = -0.707
 
         # 台阶起始点 (蓝区默认值, 红区已覆盖)
         cfg.stairs_start_x = self.declare_parameter('stairs_start_x', cfg.stairs_start_x).value
