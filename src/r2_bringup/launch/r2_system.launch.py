@@ -1,10 +1,64 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+def _launch_decision_node(context, *args, **kwargs):
+    """根据 is_red_side 参数动态选择红蓝区配置."""
+    is_red = LaunchConfiguration('is_red_side').perform(context) == 'true'
+
+    # ── 公共参数 ──
+    params = {
+        'is_red_side': is_red,
+        'fine_tune_xy_threshold': 0.01,
+        'fine_tune_stable_required': 5,
+        'fine_tune_timeout_s': 15.0,
+        'fine_tune_speed_x': 0.03,
+        'fine_tune_speed_y': 0.03,
+        'zone1_route': [5],
+        'zone1_point_7_x': -1.42,
+        'zone1_point_7_y': 1.7,
+        'zone1_point_7_z': -0.622,
+        'zone1_point_8_x': -1.42,
+        'zone1_point_8_y': 1.9,
+        'zone1_point_8_z': -0.622,
+        'use_fixed_route': True,
+        'grab_qz': 0.707,
+        'grab_qw': 0.707,
+        'stairs_start_x': -1.9,
+        'stairs_start_y': 1.9,
+        'mf_exit_x': -0.289,
+        'mf_exit_y': 7.5,
+    }
+
+    # ── 红蓝区差异参数 ──
+    if is_red:
+        params.update({
+            'fine_tune_target_x': 0.344,
+            'fine_tune_target_y': 8.528,
+            'zone1_point_5_x': 0.2,
+            'zone1_point_5_y': -0.5,    # 红区直接给负值, 不走镜像
+            'zone1_point_5_z': -0.622,
+        })
+    else:
+        params.update({
+            'fine_tune_target_x': 0.348,
+            'fine_tune_target_y': 0.950,
+            'zone1_point_5_x': 0.2,
+            'zone1_point_5_y': 0.55,
+            'zone1_point_5_z': -0.622,
+        })
+
+    return [Node(
+        package='r2_decision_py',
+        executable='r2_decision_py',
+        name='r2_decision_py',
+        output='screen',
+        parameters=[params],
+    )]
 
 def generate_launch_description():
     # template image path
@@ -42,46 +96,7 @@ def generate_launch_description():
             description='Red side or blue side'),
 
         # ── Decision node (Python async FSM) ──────────────────
-        Node(
-            package='r2_decision_py',
-            executable='r2_decision_py',
-            name='r2_decision_py',
-            output='screen',
-            parameters=[{
-                # ── 红蓝区 (所有坐标以蓝区为准, 红区自动镜像 Y) ──
-                'is_red_side': is_red_side,
-                # ── DT35 微调目标点 (传感器读数, 不随坐标系旋转) ──
-                'fine_tune_target_x': 0.348,
-                'fine_tune_target_y': 0.950,
-                'fine_tune_xy_threshold': 0.01,
-                'fine_tune_stable_required': 5,
-                'fine_tune_timeout_s': 15.0,
-                'fine_tune_speed_x': 0.03,
-                'fine_tune_speed_y': 0.03,
-                # ── Zone1 (已转新坐标系: 旧(x,y)→新(-y,x)) ──
-                'zone1_route': [5],
-                'zone1_point_5_x': 0.2,
-                'zone1_point_5_y': 0.55,
-                'zone1_point_5_z': -0.622,
-                'zone1_point_7_x': -1.42,
-                'zone1_point_7_y': 1.7,
-                'zone1_point_7_z': -0.622,
-                'zone1_point_8_x': -1.42,
-                'zone1_point_8_y': 1.9,
-                'zone1_point_8_z': -0.622,
-                # ── Zone2 (已转新坐标系) ──
-                'use_fixed_route': True,
-                # 入口抓取 (三个固定点, 默认值在 GrabPoint 数据类中)
-                'grab_qz': 0.707,
-                'grab_qw': 0.707,
-                # 台阶起始点
-                'stairs_start_x': -1.9,
-                'stairs_start_y': 1.9,
-                # 出口
-                'mf_exit_x': -0.289,
-                'mf_exit_y': 7.5,
-            }],
-        ),
+        OpaqueFunction(function=_launch_decision_node),
 
         # ── Lightboard detector (3x4 RGBW) ───────────────────
         Node(

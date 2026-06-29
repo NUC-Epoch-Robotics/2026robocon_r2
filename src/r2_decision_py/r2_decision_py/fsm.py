@@ -181,8 +181,8 @@ class FSM:
     async def fine_tune(self, target_x: float, target_y: float,
                         threshold: float, speed_x: float, speed_y: float,
                         stable_required: int, timeout: float,
-                        get_dt35):
-        """DT35 + cmd_vel 闭环对齐."""
+                        get_dt35, y_sign: float = 1.0):
+        """DT35 + cmd_vel 闭环对齐. y_sign=-1 翻转 Y 轴方向 (红区)."""
         stable_count = 0
         start = asyncio.get_event_loop().time()
 
@@ -192,7 +192,7 @@ class FSM:
             err_y = target_y - dt35_y
 
             vx = speed_x * (1 if err_x > 0 else -1) if abs(err_x) > threshold else 0.0
-            vy = speed_y * (1 if err_y > 0 else -1) if abs(err_y) > threshold else 0.0
+            vy = speed_y * y_sign * (1 if err_y > 0 else -1) if abs(err_y) > threshold else 0.0
 
             log.info("FINE_TUNE dt35=(%.3f,%.3f) target=(%.3f,%.3f) err=(%.3f,%.3f) vel=(%.3f,%.3f)",
                      dt35_x, dt35_y, target_x, target_y, err_x, err_y, vx, vy)

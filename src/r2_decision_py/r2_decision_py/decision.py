@@ -33,6 +33,7 @@ class Point:
     y: float
     z: float = 0.0
     docking_cmd: int = 0
+    dt35_y_sign: float = 1.0  # 蓝区=+1, 红区=-1 (DT35 Y轴方向)
 
 
 @dataclass
@@ -104,6 +105,7 @@ class Config:
         # ── Zone1 点表 ──
         for pt in self.point_table.values():
             pt.y = -pt.y
+            pt.dt35_y_sign = -1.0  # 红区 DT35 Y轴方向反转
 
         # ── DT35 目标: 不镜像, 传感器读数不随红蓝区变 ──
 
@@ -224,6 +226,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             cfg.fine_tune_speed_x, cfg.fine_tune_speed_y,
             cfg.fine_tune_stable_required, cfg.fine_tune_timeout_s,
             lambda: (state.dt35_x, state.dt35_y),
+            y_sign=pt.dt35_y_sign,
         )
 
         # ── 抓矛头 ──
@@ -280,22 +283,27 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     流水线:
       1. 导航到 approach → DT35 微调
       2. 发 is_finsh, 导航到 grab 点
-      3. 等 XIPAN_GRABBED (status=1) → 吸到了, 开始走下一个 approach (但不发 is_finsh)
-      4. 等 XIPAN_DONE (status=2) → 彻底完成, 可以发下一个 is_finsh
+      3. 等 XIPAN_GRABBED (status=1) → 吸到了, 后台启动走下一个 approach
+      4. 等 XIPAN_DONE (status=2) → 彻底完成, 进入下一个点
     """
 
-    nav_task = None  # 后台导航任务
+    nav_task = None  # 后台导航任务 (预取下一个 approach)
 
     for i, gp in enumerate(cfg.grab_points):
         log.info("EntryGrab: 块%d approach=(%.2f, %.2f) grab=(%.2f, %.2f) is_finsh=%d",
                  i, gp.approach_x, gp.approach_y, gp.grab_x, gp.grab_y, gp.is_finsh)
 
-        # ── 等待上一个点的导航完成 (如果有) ──
+        # ── 确保到达 approach 点 ──
+        #  如果上一轮 XIPAN_GRABBED 后已经后台导航到这, nav_task 已完成, 这里会很快
         if nav_task is not None:
             await nav_task
             nav_task = None
+        else:
+            # 第一个点: 没有后台任务, 直接导航
+            await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
+                             0, 0, cfg.grab_qz, cfg.grab_qw)
 
-        # ── DT35 微调 ──
+        # ── DT35 微调 (已经在 approach 附近) ──
         await fsm.fine_tune(
             gp.dt35_x, gp.dt35_y,
             cfg.fine_tune_xy_threshold,
@@ -304,16 +312,16 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
             lambda: (state.dt35_x, state.dt35_y),
         )
 
-        # ── 发 is_finsh + 导航到 grab 点 ──
-        act.publish_cmd(0, gp.is_finsh, 0, 2)
+        # ── 先导航到 grab 点, 到了再发 is_finsh ──
         await fsm.nav_to(gp.grab_x, gp.grab_y, 0,
                          0, 0, cfg.grab_qz, cfg.grab_qw)
+        act.publish_cmd(0, gp.is_finsh, 0, 2)
 
         # ── 等 XIPAN_GRABBED (status=1): 吸到了, 可以走位 ──
         await fsm.wait_event("XIPAN_GRABBED")
         log.info("EntryGrab: 块%d grabbed, start moving to next approach", i)
 
-        # ── 吸到了就开始走下一个 approach (不发 is_finsh) ──
+        # ── 吸到了就开始后台走下一个 approach (不发 is_finsh) ──
         if i + 1 < len(cfg.grab_points):
             nxt = cfg.grab_points[i + 1]
             nav_task = asyncio.ensure_future(
@@ -325,7 +333,7 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
         await fsm.wait_event("XIPAN_DONE")
         log.info("EntryGrab: 块%d grab fully done", i)
 
-    # ── 等最后一个点的导航完成 ──
+    # ── 等最后一个点的导航完成 (如果有) ──
     if nav_task is not None:
         await nav_task
         nav_task = None
