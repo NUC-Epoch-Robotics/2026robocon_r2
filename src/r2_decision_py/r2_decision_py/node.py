@@ -121,9 +121,9 @@ class R2DecisionNode(Node):
                 GrabPoint(approach_x=-0.8, approach_y=-2.0,
                           dt35_x=0.400, dt35_y=3.924, is_finsh=2),
                 GrabPoint(approach_x=-2.0, approach_y=-2.0,
-                          dt35_x=-0.800, dt35_y=3.924, is_finsh=1),
+                          dt35_x=0.400, dt35_y=2.724, is_finsh=1),
                 GrabPoint(approach_x=-3.2, approach_y=-2.0,
-                          dt35_x=-2.000, dt35_y=3.924, is_finsh=2),
+                          dt35_x=0.400, dt35_y=1.524, is_finsh=2),
             ]
             cfg.stairs_start_x = -2.0
             cfg.stairs_start_y = -2.0

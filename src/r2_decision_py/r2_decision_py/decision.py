@@ -158,6 +158,8 @@ class Config:
     # 台阶起始点 (三个块吸完后回到这里)
     stairs_start_x: float = -1.9
     stairs_start_y: float = 1.9
+    stairs_dt35_x: float = 0.400   # 上台阶 DT35 目标
+    stairs_dt35_y: float = 2.724
 
     # 出口
     mf_exit_x: float = 3.2
@@ -411,34 +413,31 @@ async def zone2(fsm: FSM, act, cfg: Config, state: State):
     二区完整流程.
 
     1. 入口抓取: 三个固定点依次吸块
-    2. 回到台阶起始点, 上台阶进入梅花林
-    3. 按 zone2_tasks 逐点处理 (台阶/抓取)
+    2. 走到台阶点, 微调, 上台阶
     """
 
     # ── 入口抓取 (三个固定点) ──
-    await entry_grab(fsm, act, cfg, state)
+    # await entry_grab(fsm, act, cfg, state)  # 跳过抓块, 直接测上台阶
 
-    # ── 上台阶进入梅花林 ──
-    if cfg.zone2_tasks:
-        for idx, task in enumerate(cfg.zone2_tasks):
-            log.info("Zone2 task %d: stair=%d", idx, task.stair_cmd)
+    # ── 走到台阶点 (和块1 同一个 approach) ──
+    gp = cfg.grab_points[1]
+    log.info("Zone2: nav→stairs approach (%.2f, %.2f)", gp.approach_x, gp.approach_y)
+    await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
+                     0, 0, cfg.grab_qz, cfg.grab_qw)
 
-            # 台阶
-            if task.stair_cmd == 1:
-                if task.use_rotate and (task.rotate_x != 0.0 or task.rotate_y != 0.0):
-                    await fsm.nav_to(task.rotate_x, task.rotate_y, task.z,
-                                     task.qx, task.qy, task.qz, task.qw)
-                    await fsm.nav_to(task.rotate_x, task.rotate_y, task.z,
-                                     task.rqx, task.rqy, task.rqz, task.rqw)
-                await fsm.up_stairs()
-            elif task.stair_cmd == 2:
-                await fsm.down_stairs()
+    # ── DT35 微调 ──
+    await fsm.fine_tune(
+        cfg.stairs_dt35_x, cfg.stairs_dt35_y,
+        cfg.fine_tune_xy_threshold,
+        cfg.fine_tune_speed_x, cfg.fine_tune_speed_y,
+        cfg.fine_tune_stable_required, cfg.fine_tune_timeout_s,
+        lambda: (state.dt35_x, state.dt35_y),
+    )
 
-            # 纯旋转
-            if task.stair_cmd == 0 and task.use_rotate:
-                rx = task.rotate_x if task.rotate_x != 0.0 else task.x
-                ry = task.rotate_y if task.rotate_y != 0.0 else task.y
-                await fsm.nav_to(rx, ry, task.z, task.rqx, task.rqy, task.rqz, task.rqw)
+    # ── 上台阶: 发 status_bit=1, 等回调, 发 0 ──
+    log.info("Zone2: going up stairs")
+    await fsm.up_stairs()
+    log.info("Zone2: stairs done")
 
     log.info("Zone2: FINISH")
 
@@ -458,7 +457,7 @@ async def run_mission(fsm: FSM, act, cfg: Config, state: State):
     log.info("Waiting START button...")
     await fsm.wait_event("START_PRESSED")
 
-    await zone1(fsm, act, cfg, state)
+    # await zone1(fsm, act, cfg, state)   # 跳过一区, 直接测二区
     await zone2(fsm, act, cfg, state)
 
     if not cfg.use_fixed_route:
