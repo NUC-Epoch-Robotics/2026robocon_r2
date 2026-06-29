@@ -1,2 +1,3 @@
 uint8 xipan_status
 uint8 taijie_status
+uint8 free

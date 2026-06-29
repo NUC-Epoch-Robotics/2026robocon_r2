@@ -19,7 +19,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from std_msgs.msg import Bool, UInt8, UInt8MultiArray
-from robot_serial.msg import Juece, Ack, Location
+from robot_serial.msg import Command, Ack
 
 from .fsm import FSM, Event
 from .actions import ActionDispatcher
@@ -56,7 +56,7 @@ class R2DecisionNode(Node):
 
         self.create_subscription(Ack, '/juece_ack',
                                  self.act.on_upper_ack, qos)
-        self.create_subscription(Juece, '/juece_done',
+        self.create_subscription(Command, '/command',
                                  self.act.on_upper_done, qos)
         self.create_subscription(Bool, 'spearhead/exists',
                                  self.act.on_spear_exists, 10)
@@ -66,7 +66,7 @@ class R2DecisionNode(Node):
                                  self.act.on_grab_scene_ready, 10)
         self.create_subscription(UInt8, 'r2/control/button_state',
                                  self.act.on_button_state, 10)
-        self.create_subscription(Location, '/dt35/location',
+        self.create_subscription(Command, '/dt35/location',
                                  self._on_dt35_location, qos)
 
         # ── asyncio 事件循环 ──

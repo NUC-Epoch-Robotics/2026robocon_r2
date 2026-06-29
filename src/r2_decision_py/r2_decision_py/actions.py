@@ -29,7 +29,7 @@ from rclpy.action import ActionClient
 from std_msgs.msg import Bool, UInt8
 from geometry_msgs.msg import Twist
 from nav2_msgs.action import NavigateToPose
-from robot_serial.msg import Juece, Ack, Location
+from robot_serial.msg import Command, Ack
 
 from .fsm import Event
 
@@ -62,8 +62,8 @@ class ActionDispatcher:
         self.post_event: Callable[[Event], None] = lambda e: None
 
         # ── publishers (和 C++ 完全一致的消息类型) ──
-        self.upper_cmd_pub = node.create_publisher(
-            Juece, '/juece', QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5))
+        self.cmd_pub = node.create_publisher(
+            Command, '/command', QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5))
         self.spear_enable_pub = node.create_publisher(Bool, 'spearhead/enable', 10)
         self.lightboard_enable_pub = node.create_publisher(Bool, 'lightboard/enable', 10)
         self.grab_scene_enable_pub = node.create_publisher(Bool, 'grab_scene/enable', 10)
@@ -117,19 +117,23 @@ class ActionDispatcher:
     # 底层发送
     # ==================================================================
 
-    def _publish_juece(self, status_bit: int, is_finsh: int = 0,
-                       zhuangtai: int = 0, area: int = 0):
-        """发送底层指令到 /juece topic (robot_serial/msg/Juece)."""
-        msg = Juece()
-        msg.status_bit = status_bit
-        msg.is_finsh = is_finsh
-        msg.zhuangtai = zhuangtai
+    def _publish_cmd(self, stair: int = 0, block: int = 0,
+                     spearhead: int = 0, area: int = 0,
+                     x: float = 0.0, y: float = 0.0, yaw: float = 0.0):
+        """发送指令到 /command topic (robot_serial/msg/Command)."""
+        msg = Command()
+        msg.x = x
+        msg.y = y
+        msg.yaw = yaw
+        msg.spearhead = spearhead
+        msg.block = block
+        msg.stair = stair
         msg.area = area
-        self.upper_cmd_pub.publish(msg)
+        self.cmd_pub.publish(msg)
 
-    def _publish_with_area(self, status_bit: int, is_finsh: int = 0, zhuangtai: int = 0):
+    def _publish_with_area(self, stair: int = 0, block: int = 0, spearhead: int = 0):
         """发送指令 (自动带当前区号)."""
-        self._publish_juece(status_bit, is_finsh, zhuangtai, self.area)
+        self._publish_cmd(stair, block, spearhead, self.area)
 
     # ==================================================================
     # 导航
@@ -177,12 +181,12 @@ class ActionDispatcher:
         self.post_event(Event("NAV_DONE", success=ok))
 
     # ==================================================================
-    # 机械臂指令 (is_finsh 字段)
+    # 机械臂指令 (block 字段)
     # ==================================================================
 
     def send_arm_command(self, cmd: int):
         """
-        发送机械臂指令 (is_finsh 字段).
+        发送机械臂指令 (block 字段).
         完成后 post ARM_DONE.
         """
         if cmd != 0:
@@ -200,12 +204,12 @@ class ActionDispatcher:
         log.info("ARM cmd=%d (waiting ACK...)", cmd)
 
     # ==================================================================
-    # 矛头指令 (zhuangtai 字段)
+    # 矛头指令 (spearhead 字段)
     # ==================================================================
 
     def send_spearhead_command(self, cmd: int):
         """
-        发送矛头指令 (zhuangtai 字段).
+        发送矛头指令 (spearhead 字段).
         完成后 post ARM_DONE.
         带 ACK 重发 + DONE 超时重发.
         """
@@ -224,7 +228,7 @@ class ActionDispatcher:
         self.last_spearhead_send_time = now
 
         self._publish_with_area(0, 0, cmd)
-        log.info("SPEARHEAD cmd zhuangtai=%d (waiting ACK...)", cmd)
+        log.info("SPEARHEAD cmd=%d (waiting ACK...)", cmd)
 
     def set_hold_cmd(self, cmd: int):
         """等待期间心跳维持这个命令."""
@@ -260,14 +264,14 @@ class ActionDispatcher:
     # 抓取
     # ==================================================================
 
-    def start_zone2_grab(self, is_finsh: int):
-        """发抓取指令 (is_finsh 字段). 单次发送."""
+    def start_zone2_grab(self, block: int):
+        """发抓取指令 (block 字段). 单次发送."""
         self.stop_zone2_grab()
-        self._publish_with_area(0, is_finsh)
-        log.info("GRAB is_finsh=%d", is_finsh)
+        self._publish_with_area(0, block)
+        log.info("GRAB block=%d", block)
 
     def stop_zone2_grab(self):
-        """停止抓取 (is_finsh=0)."""
+        """停止抓取 (block=0)."""
         self._publish_with_area(0, 0)
 
     # ==================================================================
@@ -323,12 +327,12 @@ class ActionDispatcher:
     # 底层 publish (供 decision.py 直接调用)
     # ==================================================================
 
-    def publish_cmd(self, status_bit: int, is_finsh: int = 0,
-                    zhuangtai: int = 0, area: int = 0):
-        self._publish_juece(status_bit, is_finsh, zhuangtai, area)
+    def publish_cmd(self, stair: int = 0, block: int = 0,
+                    spearhead: int = 0, area: int = 0):
+        self._publish_cmd(stair, block, spearhead, area)
 
-    def publish_cmd_with_area(self, status_bit: int, is_finsh: int = 0, zhuangtai: int = 0):
-        self._publish_with_area(status_bit, is_finsh, zhuangtai)
+    def publish_cmd_with_area(self, stair: int = 0, block: int = 0, spearhead: int = 0):
+        self._publish_with_area(stair, block, spearhead)
 
     # ==================================================================
     # ROS 回调 (在 node 的订阅中调用)
@@ -358,16 +362,16 @@ class ActionDispatcher:
         # taijie_status=1/2 → 台阶完成: 先发 0, 再 post 事件
         if msg.taijie_status in (1, 2):
             log.info("STAIR callback: taijie_status=%d, sending 0", msg.taijie_status)
-            self.stop_stair()   # 发 status_bit=0
+            self.stop_stair()   # 发 stair=0
             self.post_event(Event("DOWN_JUECE_DONE"))
             return
 
     def on_upper_done(self, msg):
         """
-        /juece_done 回调 (robot_serial/msg/Juece).
+        /command 回调 (robot_serial/msg/Command).
         C++ 对应: R2DecisionNode::onUpperDone
         """
-        if msg.zhuangtai != 1:
+        if msg.spearhead != 1:
             return
 
         # 台阶完成 → DOWN_JUECE_DONE (最高优先级)
@@ -378,13 +382,13 @@ class ActionDispatcher:
 
         # spearhead 指令完成
         if self.spearhead_active:
-            if self._handle_spearhead_done(msg.status_bit, msg.is_finsh != 0):
-                self.post_event(Event("ARM_DONE", success=(msg.is_finsh != 0)))
+            if self._handle_spearhead_done(msg.stair, msg.block != 0):
+                self.post_event(Event("ARM_DONE", success=(msg.block != 0)))
             return
 
         # 普通机械臂指令完成
-        self._handle_arm_done(msg.status_bit, msg.is_finsh != 0)
-        self.post_event(Event("ARM_DONE", success=(msg.is_finsh != 0)))
+        self._handle_arm_done(msg.stair, msg.block != 0)
+        self.post_event(Event("ARM_DONE", success=(msg.block != 0)))
 
     def on_spear_exists(self, msg):
         pass  # 更新状态用, 不产生事件
