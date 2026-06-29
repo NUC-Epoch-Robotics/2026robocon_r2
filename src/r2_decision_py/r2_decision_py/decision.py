@@ -41,8 +41,6 @@ class GrabPoint:
     """二区入口抓取点."""
     approach_x: float = 0.0
     approach_y: float = 0.0
-    grab_x: float = 0.0
-    grab_y: float = 0.0
     dt35_x: float = 0.0
     dt35_y: float = 0.0
     is_finsh: int = 0
@@ -105,7 +103,6 @@ class Config:
         # ── Zone1 点表 ──
         for pt in self.point_table.values():
             pt.y = -pt.y
-            pt.dt35_y_sign = -1.0  # 红区 DT35 Y轴方向反转
 
         # ── DT35 目标: 不镜像, 传感器读数不随红蓝区变 ──
 
@@ -122,7 +119,6 @@ class Config:
         # ── 入口抓取坐标 (只镜像 Y, DT35 不镜像) ──
         for gp in self.grab_points:
             gp.approach_y = -gp.approach_y
-            gp.grab_y = -gp.grab_y
 
         # ── 台阶起始点 ──
         self.stairs_start_y = -self.stairs_start_y
@@ -151,17 +147,18 @@ class Config:
     zone2_fixed_backoff: float = 0.1
     scene_confirm_timeout_s: float = 5.0
 
-    # 入口抓取 (三个固定抓块点)
+    # 入口抓取 (蓝区默认值, 红区在 launch 里覆盖)
     grab_points: list[GrabPoint] = field(default_factory=lambda: [
-        GrabPoint(approach_x=-0.7, approach_y=1.9, grab_x=-0.7, grab_y=2.15,
+        GrabPoint(approach_x=-0.7, approach_y=1.9,
                   dt35_x=0.428, dt35_y=1.516, is_finsh=2),
-        GrabPoint(approach_x=-1.9, approach_y=1.9, grab_x=-1.9, grab_y=2.15,
+        GrabPoint(approach_x=-1.9, approach_y=1.9,
                   dt35_x=0.428, dt35_y=2.716, is_finsh=1),
-        GrabPoint(approach_x=-3.1, approach_y=1.9, grab_x=-3.1, grab_y=2.15,
+        GrabPoint(approach_x=-3.1, approach_y=1.9,
                   dt35_x=0.428, dt35_y=3.919, is_finsh=2),
     ])
     grab_qz: float = 0.707    # 抓块时的四元数 z 分量 (蓝区)
     grab_qw: float = 0.707    # 抓块时的四元数 w 分量
+    grab_forward_speed: float = 0.1  # 发 is_finsh 后持续前进的 Y 速度 (蓝区正, 红区自动取反)
 
     # 台阶起始点 (三个块吸完后回到这里)
     stairs_start_x: float = -1.9
@@ -238,6 +235,8 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             if not result.success:
                 log.warning("Zone1 grab failed after retry, continue")
 
+        await fsm.wait(1.0)  # 等抓取动作完成, 避免立刻转向时矛头还没收回
+
         # ── 转 180° ──
         state.current_yaw += math.pi
         await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
@@ -280,30 +279,30 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
     """
     入口抓取: 三个固定点依次吸块, 吸完回到台阶起始点.
 
-    流水线:
+    流程 (每个点):
       1. 导航到 approach → DT35 微调
-      2. 发 is_finsh, 导航到 grab 点
-      3. 等 XIPAN_GRABBED (status=1) → 吸到了, 后台启动走下一个 approach
-      4. 等 XIPAN_DONE (status=2) → 彻底完成, 进入下一个点
+      2. 发 is_finsh + 开始持续往前走 (cmd_vel)
+      3. 等 XIPAN_GRABBED (status=1) → 停车, 后台走下一个 approach
+      4. 等 XIPAN_DONE (status=2) → 彻底完成, 进下一个点
     """
 
-    nav_task = None  # 后台导航任务 (预取下一个 approach)
+    nav_task = None
+    # 前进速度: 蓝区正, 红区负
+    forward_speed = cfg.grab_forward_speed if not cfg.is_red_side else -cfg.grab_forward_speed
 
     for i, gp in enumerate(cfg.grab_points):
-        log.info("EntryGrab: 块%d approach=(%.2f, %.2f) grab=(%.2f, %.2f) is_finsh=%d",
-                 i, gp.approach_x, gp.approach_y, gp.grab_x, gp.grab_y, gp.is_finsh)
+        log.info("EntryGrab: 块%d approach=(%.2f, %.2f) dt35=(%.3f, %.3f) is_finsh=%d",
+                 i, gp.approach_x, gp.approach_y, gp.dt35_x, gp.dt35_y, gp.is_finsh)
 
         # ── 确保到达 approach 点 ──
-        #  如果上一轮 XIPAN_GRABBED 后已经后台导航到这, nav_task 已完成, 这里会很快
         if nav_task is not None:
             await nav_task
             nav_task = None
         else:
-            # 第一个点: 没有后台任务, 直接导航
             await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
                              0, 0, cfg.grab_qz, cfg.grab_qw)
 
-        # ── DT35 微调 (已经在 approach 附近) ──
+        # ── DT35 微调 ──
         await fsm.fine_tune(
             gp.dt35_x, gp.dt35_y,
             cfg.fine_tune_xy_threshold,
@@ -312,16 +311,18 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
             lambda: (state.dt35_x, state.dt35_y),
         )
 
-        # ── 先导航到 grab 点, 到了再发 is_finsh ──
-        await fsm.nav_to(gp.grab_x, gp.grab_y, 0,
-                         0, 0, cfg.grab_qz, cfg.grab_qw)
+        # ── 发 is_finsh + 开始持续前进 ──
         act.publish_cmd(0, gp.is_finsh, 0, 2)
+        act.publish_cmd_vel(0.0, forward_speed)
+        log.info("EntryGrab: 块%d is_finsh=%d sent, moving forward vy=%.3f",
+                 i, gp.is_finsh, forward_speed)
 
-        # ── 等 XIPAN_GRABBED (status=1): 吸到了, 可以走位 ──
+        # ── 等 XIPAN_GRABBED (status=1): 吸到了, 停车 ──
         await fsm.wait_event("XIPAN_GRABBED")
-        log.info("EntryGrab: 块%d grabbed, start moving to next approach", i)
+        act.stop_cmd_vel()
+        log.info("EntryGrab: 块%d grabbed, stopped", i)
 
-        # ── 吸到了就开始后台走下一个 approach (不发 is_finsh) ──
+        # ── 后台走下一个 approach ──
         if i + 1 < len(cfg.grab_points):
             nxt = cfg.grab_points[i + 1]
             nav_task = asyncio.ensure_future(
@@ -331,14 +332,11 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
 
         # ── 等 XIPAN_DONE (status=2): 彻底完成 ──
         await fsm.wait_event("XIPAN_DONE")
-        log.info("EntryGrab: 块%d grab fully done", i)
-
-    # ── 等最后一个点的导航完成 (如果有) ──
-    if nav_task is not None:
-        await nav_task
-        nav_task = None
+        log.info("EntryGrab: 块%d done", i)
 
     # ── 回到台阶起始点 ──
+    if nav_task is not None:
+        await nav_task
     log.info("EntryGrab: nav→stairs_start (%.2f, %.2f)", cfg.stairs_start_x, cfg.stairs_start_y)
     await fsm.nav_to(cfg.stairs_start_x, cfg.stairs_start_y, 0,
                      0, 0, cfg.grab_qz, cfg.grab_qw)
