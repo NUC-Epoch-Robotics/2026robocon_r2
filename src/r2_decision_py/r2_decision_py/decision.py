@@ -238,6 +238,9 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             act.set_hold_cmd(pt.docking_cmd)
             await fsm.spearhead_and_wait(pt.docking_cmd)
 
+        # ── 等对接完成 (无回调, 硬等) ──
+        await fsm.wait(5.0)
+
         # ── 收尾: 发 cmd=4, 等完成, 清指令, 切区号 ──
         act.set_hold_cmd(4)
         act.suppress_heartbeat_flag(True)
