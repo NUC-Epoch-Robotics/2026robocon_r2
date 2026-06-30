@@ -229,8 +229,6 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             if not result.success:
                 log.warning("Zone1 grab failed after retry, continue")
 
-        await fsm.wait(2.0)  # 等抓取动作完成, 避免立刻转向时矛头还没收回
-
         # ── 转 180° ──
         state.current_yaw += math.pi
         await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
@@ -240,25 +238,20 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             act.set_hold_cmd(pt.docking_cmd)
             await fsm.spearhead_and_wait(pt.docking_cmd)
 
-        # ── 等对接完成 (TODO: 之后改成事件驱动) ──
-        await fsm.wait(5.0)
-
-        # ── DOCKING_DONE: 发 zhuangtai=4, 等 DONE, 再等 5s, 再发 area 切换 ──
+        # ── 收尾: 发 cmd=4, 等完成, 清指令, 切区号 ──
         act.set_hold_cmd(4)
         act.suppress_heartbeat_flag(True)
         await fsm.spearhead_and_wait(4)
-        log.info("Zone1: zhuangtai=4 done, wait 5s")
-        await fsm.wait(5.0)
+        log.info("Zone1: cmd=4 done")
 
         act.set_hold_cmd(0)
         act.publish_cmd_with_area(0, 0, 0)
-        await fsm.wait(5.0)
 
         state.area = 2
         act.publish_cmd(0, 0, 0, 2)
-        await fsm.wait(5.0)
 
         act.enable_lightboard(False)
+        act.suppress_heartbeat_flag(False)
         log.info("Zone1: entry %d done", pt.id)
 
     act.suppress_heartbeat_flag(False)

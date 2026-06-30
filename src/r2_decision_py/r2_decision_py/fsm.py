@@ -168,12 +168,12 @@ class FSM:
 
     async def spearhead_and_wait(self, cmd: int) -> Event:
         """发送矛头指令, 等待完成."""
-        self.act.send_spearhead_command(cmd)
+        await self.act.send_spearhead_command(cmd)
         return await self.wait_event("ARM_DONE")
 
     async def arm_and_wait(self, cmd: int) -> Event:
         """发送机械臂指令 (动态路线), 等待完成."""
-        self.act.send_arm_command(cmd)
+        await self.act.send_arm_command(cmd)
         return await self.wait_event("ARM_DONE")
 
     # ── DT35 微调 ──────────────────────────────────────────────
