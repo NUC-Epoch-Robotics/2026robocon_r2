@@ -213,14 +213,11 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
         # ── 第二段: 走 X (Y 已到位) ──
         await fsm.nav_to(pt.x, pt.y, pt.z)
 
-        # ── DT35 微调 ──
-        await fsm.fine_tune(
+        # ── DT35 一次性修正 ──
+        await fsm.dt35_correct(
+            pt.x, pt.y,
             cfg.fine_tune_target_x, cfg.fine_tune_target_y,
-            cfg.fine_tune_xy_threshold,
-            cfg.fine_tune_speed_x, cfg.fine_tune_speed_y,
-            cfg.fine_tune_stable_required, cfg.fine_tune_timeout_s,
             lambda: (state.dt35_x, state.dt35_y),
-            y_sign=pt.dt35_y_sign,
         )
 
         # ── 抓矛头 ──
@@ -296,12 +293,10 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
             await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
                              0, 0, cfg.grab_qz, cfg.grab_qw)
 
-        # ── DT35 微调 ──
-        await fsm.fine_tune(
+        # ── DT35 一次性修正 ──
+        await fsm.dt35_correct(
+            gp.approach_x, gp.approach_y,
             gp.dt35_x, gp.dt35_y,
-            cfg.fine_tune_xy_threshold,
-            cfg.fine_tune_speed_x, cfg.fine_tune_speed_y,
-            cfg.fine_tune_stable_required, cfg.fine_tune_timeout_s,
             lambda: (state.dt35_x, state.dt35_y),
         )
 
@@ -425,12 +420,10 @@ async def zone2(fsm: FSM, act, cfg: Config, state: State):
     await fsm.nav_to(gp.approach_x, gp.approach_y, 0,
                      0, 0, cfg.grab_qz, cfg.grab_qw)
 
-    # ── DT35 微调 ──
-    await fsm.fine_tune(
+    # ── DT35 一次性修正 ──
+    await fsm.dt35_correct(
+        gp.approach_x, gp.approach_y,
         cfg.stairs_dt35_x, cfg.stairs_dt35_y,
-        cfg.fine_tune_xy_threshold,
-        cfg.fine_tune_speed_x, cfg.fine_tune_speed_y,
-        cfg.fine_tune_stable_required, cfg.fine_tune_timeout_s,
         lambda: (state.dt35_x, state.dt35_y),
     )
 

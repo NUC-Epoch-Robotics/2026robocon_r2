@@ -216,6 +216,35 @@ class FSM:
 
             await asyncio.sleep(0.02)
 
+    async def dt35_correct(self, nav_x: float, nav_y: float,
+                           dt35_target_x: float, dt35_target_y: float,
+                           get_dt35,
+                           qx: float = 0.0, qy: float = 0.0,
+                           qz: float = 0.0, qw: float = 1.0):
+        """
+        DT35 一次性坐标修正.
+
+        读 DT35 当前值, 算误差, 加到导航目标上, 发修正后的目标给 Nav2.
+        err = dt35_target - dt35_current
+        new_goal = nav + err
+        """
+        dt35_x, dt35_y = get_dt35()
+        err_x = dt35_target_x - dt35_x
+        err_y = dt35_target_y - dt35_y
+
+        corrected_x = nav_x + err_x
+        corrected_y = nav_y + err_y
+
+        log.info("DT35_CORRECT dt35=(%.3f,%.3f) target=(%.3f,%.3f) err=(%.3f,%.3f) "
+                 "nav=(%.2f,%.2f)→(%.2f,%.2f)",
+                 dt35_x, dt35_y, dt35_target_x, dt35_target_y, err_x, err_y,
+                 nav_x, nav_y, corrected_x, corrected_y)
+
+        self._last_nav_x = corrected_x
+        self._last_nav_y = corrected_y
+        self.act.send_navigate(corrected_x, corrected_y, 0.0, qx, qy, qz, qw)
+        return await self.wait_event("NAV_DONE")
+
     # ── 运行入口 ───────────────────────────────────────────────
 
     async def run(self, coro):
