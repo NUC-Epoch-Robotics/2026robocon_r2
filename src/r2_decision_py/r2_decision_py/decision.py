@@ -410,7 +410,7 @@ async def zone2(fsm: FSM, act, cfg: Config, state: State):
     """
 
     # ── 入口抓取 (三个固定点) ──
-    # await entry_grab(fsm, act, cfg, state)  # 跳过抓块, 直接测上台阶
+    await entry_grab(fsm, act, cfg, state)
 
     # ── 走到台阶点 (和块1 同一个 approach) ──
     gp = cfg.grab_points[1]
@@ -448,7 +448,7 @@ async def run_mission(fsm: FSM, act, cfg: Config, state: State):
     log.info("Waiting START button...")
     await fsm.wait_event("START_PRESSED")
 
-    # await zone1(fsm, act, cfg, state)   # 跳过一区, 直接测二区
+    await zone1(fsm, act, cfg, state)
     await zone2(fsm, act, cfg, state)
 
     if not cfg.use_fixed_route:

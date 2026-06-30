@@ -129,7 +129,8 @@ class ActionDispatcher:
 
     def _publish_cmd(self, stair: int = 0, block: int = 0,
                      spearhead: int = 0, area: int = 0,
-                     x: float = 0.0, y: float = 0.0, yaw: float = 0.0):
+                     x: float = 0.0, y: float = 0.0, yaw: float = 0.0,
+                     dt35: int = 0):
         """发送指令到 /command topic (robot_serial/msg/Command)."""
         msg = Command()
         msg.x = x
@@ -138,6 +139,7 @@ class ActionDispatcher:
         msg.spearhead = spearhead
         msg.block = block
         msg.stair = stair
+        msg.dt35 = dt35
         msg.area = area
         self.cmd_pub.publish(msg)
 

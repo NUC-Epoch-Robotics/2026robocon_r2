@@ -5,3 +5,4 @@ uint8 spearhead
 uint8 block
 uint8 stair
 uint8 area
+uint8 dt35
