@@ -37,10 +37,10 @@ def _launch_decision_node(context, *args, **kwargs):
     # ── 红蓝区差异参数 ──
     if is_red:
         params.update({
-            'fine_tune_target_x': 0.388,
-            'fine_tune_target_y': 8.524,
-            'zone1_point_5_x': 0.15,
-            'zone1_point_5_y': 0.55,     # 镜像后变 -0.5
+            'fine_tune_target_x': 0.376,
+            'fine_tune_target_y': 8.568,
+            'zone1_point_5_x': 0.60,
+            'zone1_point_5_y': -0.36,
             'zone1_point_5_z': -0.622,
         })
     else:
