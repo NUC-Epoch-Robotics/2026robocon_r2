@@ -191,8 +191,9 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
     """
     一区流程 (简化版):
       1. 发 area=1
-      2. 走到目标点
-      3. 等待 60s
+      2. 直接走到目标点
+      3. DT35微调
+      4. 等待 60s
     """
     state.area = 1
     act.publish_cmd(0, 0, 0, 1)
@@ -209,11 +210,15 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
 
         log.info("Zone1: point %d (%.2f, %.2f)", pt.id, pt.x, pt.y)
 
-        # ── 第一段: 走 Y (X 保持当前值) ──
-        await fsm.nav_to(fsm._last_nav_x, pt.y, pt.z)
-
-        # ── 第二段: 走 X (Y 已到位) ──
+        # ── 直接走到目标点 ──
         await fsm.nav_to(pt.x, pt.y, pt.z)
+
+        # ── DT35 一次性修正 ──
+        await fsm.dt35_correct(
+            pt.x, pt.y,
+            cfg.fine_tune_target_x, cfg.fine_tune_target_y,
+            lambda: (state.dt35_x, state.dt35_y),
+        )
 
         log.info("Zone1: arrived at point %d, waiting 60s...", pt.id)
         await fsm.wait(60.0)

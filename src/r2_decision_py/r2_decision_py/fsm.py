@@ -228,10 +228,10 @@ class FSM:
         err = dt35_target - dt35_current
         new_goal = nav + err
         """
-        # 通知下位机开始微调
-        self.act._publish_cmd(dt35=1)
-        log.info("DT35_CORRECT: dt35=1 sent")
+        # 等待一小段时间让DT35值稳定
+        await asyncio.sleep(0.3)
 
+        # 读取DT35当前值
         dt35_x, dt35_y = get_dt35()
         err_x = dt35_target_x - dt35_x
         err_y = dt35_target_y - dt35_y
@@ -244,14 +244,10 @@ class FSM:
                  dt35_x, dt35_y, dt35_target_x, dt35_target_y, err_x, err_y,
                  nav_x, nav_y, corrected_x, corrected_y)
 
-        self._last_nav_x = corrected_x
-        self._last_nav_y = corrected_y
+        # 导航到修正后的坐标
         self.act.send_navigate(corrected_x, corrected_y, 0.0, qx, qy, qz, qw)
         result = await self.wait_event("NAV_DONE")
 
-        # 微调完成, 通知下位机
-        self.act._publish_cmd(dt35=0)
-        log.info("DT35_CORRECT: dt35=0 sent, done")
         return result
 
     # ── 运行入口 ───────────────────────────────────────────────
