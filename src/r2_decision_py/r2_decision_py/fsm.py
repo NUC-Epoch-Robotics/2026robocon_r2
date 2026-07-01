@@ -156,13 +156,13 @@ class FSM:
 
     async def up_stairs(self) -> Event:
         """上台阶, 等待完成."""
-        self.act.start_stair(1)
-        return await self.wait_event("DOWN_JUECE_DONE")
+        await self.act.start_stair(1)
+        return await self.wait_event("ARM_DONE")
 
     async def down_stairs(self) -> Event:
         """下台阶, 等待完成."""
-        self.act.start_stair(2)
-        return await self.wait_event("DOWN_JUECE_DONE")
+        await self.act.start_stair(2)
+        return await self.wait_event("ARM_DONE")
 
     # ── 机械臂 / 抓取 ──────────────────────────────────────────
 

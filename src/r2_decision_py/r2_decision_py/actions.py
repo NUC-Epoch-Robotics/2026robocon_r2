@@ -33,12 +33,7 @@ from .fsm import Event
 
 log = logging.getLogger("actions")
 
-# ── 常量 (和 C++ 一样) ──
-UPPER_CMD_RESEND_MS = 100       # ACK 阶段: 每 100ms 重发
-UPPER_CMD_TIMEOUT_MS = 1200     # ACK 总超时
-SPEARHEAD_DONE_TIMEOUT_MS = 3000  # DONE 阶段: 3s 超时
-SPEARHEAD_MAX_RETRY = 3         # 最多重发 3 次
-IDLE_HEARTBEAT_MS = 500         # 空闲心跳周期
+# ── 常量 ──
 BUTTON_DEBOUNCE_MS = 120        # 按钮消抖
 
 
@@ -71,27 +66,6 @@ class ActionDispatcher:
         # ── 区号 ──
         self.area = 0
 
-        # ── arm 指令状态 ──
-        self.pending_upper_cmd = 0
-        self.waiting_upper_ack = False
-        self.upper_cmd_start_time = 0.0
-        self.last_upper_send_time = 0.0
-
-        # ── spearhead 指令状态 ──
-        self.pending_spearhead_cmd = 0
-        self.spearhead_active = False
-        self.waiting_spearhead_ack = False
-        self.spearhead_acked = False
-        self.spearhead_retry_count = 0
-        self.spearhead_cmd_start_time = 0.0
-        self.last_spearhead_send_time = 0.0
-        self.spearhead_done_pending = False
-
-        # ── hold / heartbeat ──
-        self.hold_cmd = 0
-        self.suppress_heartbeat = False
-        self.last_idle_heartbeat_time = 0.0
-
         # ── 台阶 ──
         self.stair_active = False
         self.pending_stair_cmd = 0
@@ -112,8 +86,8 @@ class ActionDispatcher:
         # ── 导航等待 ──
         self.waiting_nav_done = False
 
-        # ── 定时 tick (20ms) ──
-        self._tick_timer = node.create_timer(0.020, self._tick)
+        # ── 上肢动作等待 ──
+        self.waiting_arm_done = False
 
     # ==================================================================
     # 底层发送
@@ -149,10 +123,6 @@ class ActionDispatcher:
         msg.area = area
         self.cmd_pub.publish(msg)
 
-    def _publish_with_area(self, stair: int = 0, block: int = 0, spearhead: int = 0):
-        """发送指令 (自动带当前区号)."""
-        self._publish_cmd(stair, block, spearhead, self.area)
-
     # ==================================================================
     # 导航 (直接发 /command, 不走 Nav2)
     # ==================================================================
@@ -179,22 +149,13 @@ class ActionDispatcher:
     async def send_arm_command(self, cmd: int):
         """
         发送机械臂指令 (block 字段).
-        完成后 post ARM_DONE.
+        完成后 post ARM_DONE (等 up_free=2).
         """
         await self.wait_up_free()
-        if cmd != 0:
-            self._publish_with_area(0)  # 先发一条空指令
-
-        self.pending_upper_cmd = cmd
-        self.waiting_upper_ack = True
-        self.hold_cmd = cmd  # ACK→DONE 期间心跳维持此指令
-
-        now = time.monotonic()
-        self.upper_cmd_start_time = now
-        self.last_upper_send_time = now
-
-        self._publish_with_area(cmd)
-        log.info("ARM cmd=%d (waiting ACK...)", cmd)
+        self._publish_cmd(block=cmd, area=self.area)
+        self.up_free = False
+        self.waiting_arm_done = True
+        log.info("ARM cmd=%d sent, waiting up_free=2", cmd)
 
     # ==================================================================
     # 矛头指令 (spearhead 字段)
@@ -203,26 +164,13 @@ class ActionDispatcher:
     async def send_spearhead_command(self, cmd: int):
         """
         发送矛头指令 (spearhead 字段).
-        完成后 post ARM_DONE.
-        带 ACK 重发 + DONE 超时重发.
+        完成后 post ARM_DONE (等 up_free=2).
         """
         await self.wait_up_free()
-        # 清理旧状态
-        self.spearhead_active = False
-        self.waiting_spearhead_ack = False
-
-        self.pending_spearhead_cmd = cmd
-        self.waiting_spearhead_ack = True
-        self.spearhead_active = True
-        self.spearhead_acked = False
-        self.spearhead_retry_count = 1
-
-        now = time.monotonic()
-        self.spearhead_cmd_start_time = now
-        self.last_spearhead_send_time = now
-
-        self._publish_with_area(0, 0, cmd)
-        log.info("SPEARHEAD cmd=%d (waiting ACK...)", cmd)
+        self._publish_cmd(spearhead=cmd, area=self.area)
+        self.up_free = False
+        self.waiting_arm_done = True
+        log.info("SPEARHEAD cmd=%d sent, waiting up_free=2", cmd)
 
     def set_hold_cmd(self, cmd: int):
         """等待期间心跳维持这个命令."""
@@ -236,21 +184,23 @@ class ActionDispatcher:
     # 台阶
     # ==================================================================
 
-    def start_stair(self, cmd: int):
+    async def start_stair(self, cmd: int):
         """
-        发台阶指令, 等下位机回调后才发 0.
+        发台阶指令, 等 up_free=2 后完成.
         cmd=1 上台阶, cmd=2 下台阶.
         """
-        self.stop_stair()
+        await self.wait_up_free()
+        self._publish_cmd(stair=cmd, area=self.area)
+        self.up_free = False
+        self.waiting_arm_done = True
         self.stair_active = True
         self.pending_stair_cmd = cmd
-        self._publish_with_area(cmd)
-        log.info("STAIR cmd=%d (waiting callback)", cmd)
+        log.info("STAIR cmd=%d sent, waiting up_free=2", cmd)
 
     def stop_stair(self):
         """清台阶状态, 发 0."""
         if self.stair_active:
-            self._publish_with_area(0)
+            self._publish_cmd(stair=0, area=self.area)
         self.stair_active = False
         self.pending_stair_cmd = 0
 
@@ -261,12 +211,12 @@ class ActionDispatcher:
     def start_zone2_grab(self, block: int):
         """发抓取指令 (block 字段). 单次发送."""
         self.stop_zone2_grab()
-        self._publish_with_area(0, block)
+        self._publish_cmd(block=block, area=self.area)
         log.info("GRAB block=%d", block)
 
     def stop_zone2_grab(self):
         """停止抓取 (block=0)."""
-        self._publish_with_area(0, 0)
+        self._publish_cmd(block=0, area=self.area)
 
     # ==================================================================
     # 传感器开关
@@ -329,7 +279,7 @@ class ActionDispatcher:
             self.up_free = False
 
     def publish_cmd_with_area(self, stair: int = 0, block: int = 0, spearhead: int = 0):
-        self._publish_with_area(stair, block, spearhead)
+        self._publish_cmd(stair, block, spearhead, self.area)
 
     # ==================================================================
     # ROS 回调 (在 node 的订阅中调用)
@@ -355,6 +305,12 @@ class ActionDispatcher:
             if not self.up_free:
                 log.info("UP_FREE=2: upper limb free")
             self.up_free = True
+            # 上肢动作完成
+            if self.waiting_arm_done:
+                self.waiting_arm_done = False
+                log.info("ARM done (up_free=2)")
+                self.post_event(Event("ARM_DONE", success=True))
+                return
 
         # down_free: 1=忙, 2=空闲
         if msg.down_free == 1:
@@ -390,30 +346,6 @@ class ActionDispatcher:
             self.stop_stair()   # 发 stair=0
             self.post_event(Event("DOWN_JUECE_DONE"))
             return
-
-    def on_upper_done(self, msg):
-        """
-        /command 回调 (robot_serial/msg/Command).
-        C++ 对应: R2DecisionNode::onUpperDone
-        """
-        if msg.spearhead != 1:
-            return
-
-        # 台阶完成 → DOWN_JUECE_DONE (最高优先级)
-        if self.stair_active:
-            self.stop_stair()
-            self.post_event(Event("DOWN_JUECE_DONE"))
-            return
-
-        # spearhead 指令完成
-        if self.spearhead_active:
-            if self._handle_spearhead_done(msg.stair, msg.block != 0):
-                self.post_event(Event("ARM_DONE", success=(msg.block != 0)))
-            return
-
-        # 普通机械臂指令完成
-        self._handle_arm_done(msg.stair, msg.block != 0)
-        self.post_event(Event("ARM_DONE", success=(msg.block != 0)))
 
     def on_spear_exists(self, msg):
         pass  # 更新状态用, 不产生事件
@@ -455,107 +387,3 @@ class ActionDispatcher:
         """DT35 位置更新. 在 node.py 中直接更新 state."""
         pass
 
-    # ==================================================================
-    # 可靠性: ACK/DONE 处理
-    # ==================================================================
-
-    def _handle_arm_done(self, command: int, success: bool):
-        """普通机械臂指令 DONE."""
-        self.waiting_upper_ack = False
-        self.hold_cmd = 0
-        log.info("ARM DONE: cmd=%d success=%d", command, success)
-
-    def _handle_spearhead_done(self, command: int, success: bool) -> bool:
-        """
-        矛头指令 DONE. 严格校验 cmd 匹配.
-        返回 True 表示接受了这个 DONE.
-        """
-        if not self.spearhead_active or command != self.pending_spearhead_cmd:
-            log.debug("Drop stale SPEARHEAD DONE: cmd=%d (pending=%d)",
-                      command, self.pending_spearhead_cmd)
-            return False
-
-        self.waiting_spearhead_ack = False
-        self.spearhead_active = False
-        self.pending_spearhead_cmd = 0
-        self.spearhead_acked = False
-        self.spearhead_retry_count = 0
-        self.spearhead_done_pending = True
-
-        log.info("SPEARHEAD DONE: cmd=%d success=%d", command, success)
-        return True
-
-    # ==================================================================
-    # 定时 tick (每 20ms 调用)
-    # ==================================================================
-
-    def _tick(self):
-        """
-        可靠性定时器. 对应 C++ ActionDispatcher::tickReliability.
-
-        逻辑:
-          1. spearhead 等 ACK → 每 100ms 重发, 3 次后放弃
-          2. spearhead 等 DONE → 3s 超时重发, 3 次后放弃
-          3. arm 等 ACK → 每 100ms 重发
-        """
-        now = time.monotonic()
-
-        # ── spearhead 可靠性 ──
-        if self.spearhead_active and self.pending_spearhead_cmd != 0:
-            # 阶段 1: 等 ACK
-            if self.waiting_spearhead_ack:
-                if (now - self.last_spearhead_send_time) * 1000 >= UPPER_CMD_RESEND_MS:
-                    if self.spearhead_retry_count >= SPEARHEAD_MAX_RETRY:
-                        # 重试耗尽
-                        log.warning("SPEARHEAD cmd %d no ACK after %d attempts, give up",
-                                    self.pending_spearhead_cmd, SPEARHEAD_MAX_RETRY)
-                        giveup_cmd = self.pending_spearhead_cmd
-                        self.spearhead_active = False
-                        self.waiting_spearhead_ack = False
-                        self.pending_spearhead_cmd = 0
-                        self.spearhead_acked = False
-                        self.spearhead_retry_count = 0
-                        self.spearhead_done_pending = True
-                        self.post_event(Event("ARM_DONE", success=False))
-                        return
-
-                    self.spearhead_retry_count += 1
-                    self._publish_with_area(0, 0, self.pending_spearhead_cmd)
-                    self.last_spearhead_send_time = now
-                    self.spearhead_cmd_start_time = now
-                return
-
-            # 阶段 2: 收到 ACK, 等 DONE
-            if (self.spearhead_acked and
-                    (now - self.spearhead_cmd_start_time) * 1000 >= SPEARHEAD_DONE_TIMEOUT_MS):
-                if self.spearhead_retry_count < SPEARHEAD_MAX_RETRY:
-                    self.spearhead_retry_count += 1
-                    log.warning("SPEARHEAD cmd %d DONE timeout, resend (%d/%d)",
-                                self.pending_spearhead_cmd, self.spearhead_retry_count, SPEARHEAD_MAX_RETRY)
-                    self._publish_with_area(0, 0, self.pending_spearhead_cmd)
-                    self.waiting_spearhead_ack = True
-                    self.spearhead_acked = False
-                    self.last_spearhead_send_time = now
-                    self.spearhead_cmd_start_time = now
-                else:
-                    log.warning("SPEARHEAD cmd %d DONE timeout after %d retries, give up",
-                                self.pending_spearhead_cmd, SPEARHEAD_MAX_RETRY)
-                    giveup_cmd = self.pending_spearhead_cmd
-                    self.spearhead_active = False
-                    self.waiting_spearhead_ack = False
-                    self.pending_spearhead_cmd = 0
-                    self.spearhead_acked = False
-                    self.spearhead_retry_count = 0
-                    self.spearhead_done_pending = True
-                    self.post_event(Event("ARM_DONE", success=False))
-            return
-
-        # ── arm 可靠性 ──
-        if self.waiting_upper_ack:
-            if (now - self.last_upper_send_time) * 1000 >= UPPER_CMD_RESEND_MS:
-                self._publish_with_area(self.pending_upper_cmd)
-                self.last_upper_send_time = now
-            if (now - self.upper_cmd_start_time) * 1000 >= UPPER_CMD_TIMEOUT_MS:
-                log.warning("ARM cmd %d ACK timeout, resending...", self.pending_upper_cmd)
-                self.upper_cmd_start_time = now
-            return

@@ -51,13 +51,11 @@ class R2DecisionNode(Node):
         # ── 加载参数 ──
         self._load_params()
 
-        # ── 订阅 (和 C++ 完全一致的消息类型) ──
+        # ── 订阅 ──
         qos = QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT, depth=5)
 
         self.create_subscription(Ack, '/juece_ack',
                                  self.act.on_upper_ack, qos)
-        self.create_subscription(Command, '/command',
-                                 self.act.on_upper_done, qos)
         self.create_subscription(Bool, 'spearhead/exists',
                                  self.act.on_spear_exists, 10)
         self.create_subscription(UInt8MultiArray, 'lightboard/map',
