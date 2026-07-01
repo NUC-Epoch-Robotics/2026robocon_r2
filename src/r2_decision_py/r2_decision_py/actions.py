@@ -324,6 +324,9 @@ class ActionDispatcher:
     def publish_cmd(self, stair: int = 0, block: int = 0,
                     spearhead: int = 0, area: int = 0):
         self._publish_cmd(stair, block, spearhead, area)
+        # 发 area 指令后，标记等待上肢完成
+        if area != 0:
+            self.up_free = False
 
     def publish_cmd_with_area(self, stair: int = 0, block: int = 0, spearhead: int = 0):
         self._publish_with_area(stair, block, spearhead)

@@ -189,11 +189,10 @@ class State:
 
 async def zone1(fsm: FSM, act, cfg: Config, state: State):
     """
-    一区完整流程.
-
-    新流程 (坐标系已旋转90°):
-      走X → 走Y → DT35微调 → 抓矛头 → 转180° → 对接 → 收尾
-    不再需要中间转90°.
+    一区流程 (简化版):
+      1. 发 area=1
+      2. 走到目标点
+      3. 等待 60s
     """
     state.area = 1
     act.publish_cmd(0, 0, 0, 1)
@@ -201,6 +200,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
     await act.wait_up_free()
     log.info("Zone1: free=2 received, starting navigation")
 
+    # 只走第一个目标点
     for idx, point_id in enumerate(cfg.zone1_route):
         pt = cfg.point_table.get(point_id)
         if pt is None:
@@ -215,52 +215,11 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
         # ── 第二段: 走 X (Y 已到位) ──
         await fsm.nav_to(pt.x, pt.y, pt.z)
 
-        # ── DT35 一次性修正 ──
-        await fsm.dt35_correct(
-            pt.x, pt.y,
-            cfg.fine_tune_target_x, cfg.fine_tune_target_y,
-            lambda: (state.dt35_x, state.dt35_y),
-        )
+        log.info("Zone1: arrived at point %d, waiting 60s...", pt.id)
+        await fsm.wait(60.0)
+        log.info("Zone1: wait done")
 
-        # ── 抓矛头 ──
-        act.set_hold_cmd(1)
-        result = await fsm.spearhead_and_wait(1)
-        if not result.success:
-            log.warning("Zone1 grab failed, retry once")
-            result = await fsm.spearhead_and_wait(1)
-            if not result.success:
-                log.warning("Zone1 grab failed after retry, continue")
-
-        # ── 转 180° ──
-        state.current_yaw += math.pi
-        await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
-
-        # ── 对接 ──
-        if pt.docking_cmd:
-            act.set_hold_cmd(pt.docking_cmd)
-            await fsm.spearhead_and_wait(pt.docking_cmd)
-
-        # ── 等对接完成 (无回调, 硬等) ──
-        await fsm.wait(5.0)
-
-        # ── 收尾: 发 cmd=4, 等完成, 清指令, 切区号 ──
-        act.set_hold_cmd(4)
-        act.suppress_heartbeat_flag(True)
-        await fsm.spearhead_and_wait(4)
-        log.info("Zone1: cmd=4 done")
-
-        act.set_hold_cmd(0)
-        act.publish_cmd_with_area(0, 0, 0)
-
-        state.area = 2
-        act.publish_cmd(0, 0, 0, 2)
-
-        act.enable_lightboard(False)
-        act.suppress_heartbeat_flag(False)
-        log.info("Zone1: entry %d done", pt.id)
-
-    act.suppress_heartbeat_flag(False)
-    log.info("Zone1: FINISH → Zone2")
+    log.info("Zone1: FINISH")
 
 
 # ==========================================================================
@@ -439,9 +398,7 @@ async def zone2(fsm: FSM, act, cfg: Config, state: State):
 
 async def run_mission(fsm: FSM, act, cfg: Config, state: State):
     """
-    完整比赛流程.
-
-    C++ 对应: BootState→WaitStart→Zone1→Zone2→Exit→Done (~100 行) → 这里 ~20 行
+    完整比赛流程 (简化版: 只做 Zone1).
     """
     act.enable_spear(False)
     act.enable_lightboard(False)
@@ -449,13 +406,7 @@ async def run_mission(fsm: FSM, act, cfg: Config, state: State):
     await fsm.wait_event("START_PRESSED")
 
     await zone1(fsm, act, cfg, state)
-    await zone2(fsm, act, cfg, state)
-
-    if not cfg.use_fixed_route:
-        log.info("Exit: nav to (%.2f, %.2f)", cfg.mf_exit_x, cfg.mf_exit_y)
-        await fsm.nav_to(cfg.mf_exit_x, cfg.mf_exit_y, cfg.mf_exit_z)
 
     act.enable_spear(False)
     act.enable_lightboard(False)
-    act.enable_grab_scene(False)
     log.info("=== MISSION COMPLETE ===")
