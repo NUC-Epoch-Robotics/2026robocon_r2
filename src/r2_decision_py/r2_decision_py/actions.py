@@ -110,8 +110,9 @@ class ActionDispatcher:
         self.last_button_state = 0
         self.last_button_time = 0.0
 
-        # ── 机械臂状态 ──
-        self.arm_free = True  # 下位机 free 字段: 1=忙, 2=空闲
+        # ── 上下肢状态 (1=忙, 2=空闲) ──
+        self.up_free = True
+        self.down_free = True
 
         # ── 定时 tick (20ms) ──
         self._tick_timer = node.create_timer(0.020, self._tick)
@@ -120,12 +121,19 @@ class ActionDispatcher:
     # 底层发送
     # ==================================================================
 
-    async def wait_arm_free(self):
-        """等机械臂空闲 (free=2). 忙时每 50ms 轮询一次."""
-        while not self.arm_free:
-            log.info("Arm busy (free=1), waiting...")
+    async def wait_up_free(self):
+        """等上肢空闲 (up_free=2). 忙时每 50ms 轮询一次."""
+        while not self.up_free:
+            log.info("UP busy (up_free=1), waiting...")
             await asyncio.sleep(0.05)
-        log.info("Arm free (free=2), can send")
+        log.info("UP free (up_free=2), can send")
+
+    async def wait_down_free(self):
+        """等下肢空闲 (down_free=2). 忙时每 50ms 轮询一次."""
+        while not self.down_free:
+            log.info("DOWN busy (down_free=1), waiting...")
+            await asyncio.sleep(0.05)
+        log.info("DOWN free (down_free=2), can send")
 
     def _publish_cmd(self, stair: int = 0, block: int = 0,
                      spearhead: int = 0, area: int = 0,
@@ -201,7 +209,7 @@ class ActionDispatcher:
         发送机械臂指令 (block 字段).
         完成后 post ARM_DONE.
         """
-        await self.wait_arm_free()
+        await self.wait_up_free()
         if cmd != 0:
             self._publish_with_area(0)  # 先发一条空指令
 
@@ -226,7 +234,7 @@ class ActionDispatcher:
         完成后 post ARM_DONE.
         带 ACK 重发 + DONE 超时重发.
         """
-        await self.wait_arm_free()
+        await self.wait_up_free()
         # 清理旧状态
         self.spearhead_active = False
         self.waiting_spearhead_ack = False
@@ -360,17 +368,28 @@ class ActionDispatcher:
         串口驱动收到下位机 0xAA 0x55 包后发布到这里:
           xipan_status → 吸盘状态 (1=吸到块可以走位, 2=抓取彻底完成)
           taijie_status → 台阶状态 (1=上台阶完成, 2=下台阶完成)
-          free → 机械臂状态 (1=忙不可发, 2=空闲可发)
+          up_free → 上肢状态 (1=忙, 2=空闲)
+          down_free → 下肢状态 (1=忙, 2=空闲)
         """
-        # free: 1=忙, 2=空闲
-        if msg.free == 1:
-            if self.arm_free:
-                log.info("FREE=1: arm busy, waiting...")
-            self.arm_free = False
-        elif msg.free == 2:
-            if not self.arm_free:
-                log.info("FREE=2: 机械臂空闲，可以发下一步指令")
-            self.arm_free = True
+        # up_free: 1=忙, 2=空闲
+        if msg.up_free == 1:
+            if self.up_free:
+                log.info("UP_FREE=1: upper limb busy")
+            self.up_free = False
+        elif msg.up_free == 2:
+            if not self.up_free:
+                log.info("UP_FREE=2: upper limb free")
+            self.up_free = True
+
+        # down_free: 1=忙, 2=空闲
+        if msg.down_free == 1:
+            if self.down_free:
+                log.info("DOWN_FREE=1: lower limb busy")
+            self.down_free = False
+        elif msg.down_free == 2:
+            if not self.down_free:
+                log.info("DOWN_FREE=2: lower limb free")
+            self.down_free = True
 
         # xipan_status=1 → 吸到了, 可以开始走下一个点 (但还不能发 is_finsh)
         if msg.xipan_status == 1:
