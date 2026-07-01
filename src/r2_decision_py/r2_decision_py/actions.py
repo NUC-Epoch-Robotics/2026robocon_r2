@@ -85,9 +85,18 @@ class ActionDispatcher:
 
         # ── 导航等待 ──
         self.waiting_nav_done = False
+        self._last_nav_x = 0.0
+        self._last_nav_y = 0.0
+        self._last_nav_yaw = 0.0
 
         # ── 上肢动作等待 ──
         self.waiting_arm_done = False
+
+        # ── 当前指令状态（保持不变） ──
+        self._last_spearhead = 0
+        self._last_block = 0
+        self._last_stair = 0
+        self._last_dt35 = 0
 
     # ==================================================================
     # 底层发送
@@ -112,6 +121,12 @@ class ActionDispatcher:
                      x: float = 0.0, y: float = 0.0, yaw: float = 0.0,
                      dt35: int = 0):
         """发送指令到 /command topic (robot_serial/msg/Command)."""
+        # 保存当前指令状态
+        self._last_spearhead = spearhead
+        self._last_block = block
+        self._last_stair = stair
+        self._last_dt35 = dt35
+
         msg = Command()
         msg.x = x
         msg.y = y
@@ -135,8 +150,17 @@ class ActionDispatcher:
         yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
         log.info("NAV to (%.2f, %.2f) yaw=%.3f (via /command)", x, y, yaw)
 
-        # 直接发到 /command
-        self._publish_cmd(x=x, y=y, yaw=yaw)
+        # 保存最后的坐标和yaw
+        self._last_nav_x = x
+        self._last_nav_y = y
+        self._last_nav_yaw = yaw
+
+        # 直接发到 /command，保持当前上肢指令不变
+        self._publish_cmd(x=x, y=y, yaw=yaw,
+                          spearhead=self._last_spearhead,
+                          block=self._last_block,
+                          stair=self._last_stair,
+                          dt35=self._last_dt35)
 
         # 标记等待底盘完成
         self.waiting_nav_done = True
@@ -152,7 +176,11 @@ class ActionDispatcher:
         完成后 post ARM_DONE (等 up_free=2).
         """
         await self.wait_up_free()
-        self._publish_cmd(block=cmd, area=self.area)
+        # 保持当前坐标和其他指令不变
+        self._publish_cmd(block=cmd, area=self.area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          spearhead=self._last_spearhead, stair=self._last_stair,
+                          dt35=self._last_dt35)
         self.up_free = False
         self.waiting_arm_done = True
         log.info("ARM cmd=%d sent, waiting up_free=2", cmd)
@@ -167,8 +195,12 @@ class ActionDispatcher:
         完成后 post ARM_DONE (等 up_free=2).
         """
         await self.wait_up_free()
-        self._publish_cmd(spearhead=cmd, area=self.area)
-        self.up_free = False
+        # 保持当前坐标和其他指令不变
+        self._publish_cmd(spearhead=cmd, area=self.area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          block=self._last_block, stair=self._last_stair,
+                          dt35=self._last_dt35)
+        self.up_free =False
         self.waiting_arm_done = True
         log.info("SPEARHEAD cmd=%d sent, waiting up_free=2", cmd)
 
@@ -190,7 +222,11 @@ class ActionDispatcher:
         cmd=1 上台阶, cmd=2 下台阶.
         """
         await self.wait_up_free()
-        self._publish_cmd(stair=cmd, area=self.area)
+        # 保持当前坐标和其他指令不变
+        self._publish_cmd(stair=cmd, area=self.area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          spearhead=self._last_spearhead, block=self._last_block,
+                          dt35=self._last_dt35)
         self.up_free = False
         self.waiting_arm_done = True
         self.stair_active = True
@@ -200,7 +236,11 @@ class ActionDispatcher:
     def stop_stair(self):
         """清台阶状态, 发 0."""
         if self.stair_active:
-            self._publish_cmd(stair=0, area=self.area)
+            # 保持当前坐标和其他指令不变
+            self._publish_cmd(stair=0, area=self.area,
+                              x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                              spearhead=self._last_spearhead, block=self._last_block,
+                              dt35=self._last_dt35)
         self.stair_active = False
         self.pending_stair_cmd = 0
 
@@ -211,12 +251,18 @@ class ActionDispatcher:
     def start_zone2_grab(self, block: int):
         """发抓取指令 (block 字段). 单次发送."""
         self.stop_zone2_grab()
-        self._publish_cmd(block=block, area=self.area)
+        self._publish_cmd(block=block, area=self.area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          spearhead=self._last_spearhead, stair=self._last_stair,
+                          dt35=self._last_dt35)
         log.info("GRAB block=%d", block)
 
     def stop_zone2_grab(self):
         """停止抓取 (block=0)."""
-        self._publish_cmd(block=0, area=self.area)
+        self._publish_cmd(block=0, area=self.area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          spearhead=self._last_spearhead, stair=self._last_stair,
+                          dt35=self._last_dt35)
 
     # ==================================================================
     # 传感器开关
@@ -273,13 +319,19 @@ class ActionDispatcher:
 
     def publish_cmd(self, stair: int = 0, block: int = 0,
                     spearhead: int = 0, area: int = 0):
-        self._publish_cmd(stair, block, spearhead, area)
+        # 保持当前坐标和指令不变
+        self._publish_cmd(stair, block, spearhead, area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          dt35=self._last_dt35)
         # 发 area 指令后，标记等待上肢完成
         if area != 0:
             self.up_free = False
 
     def publish_cmd_with_area(self, stair: int = 0, block: int = 0, spearhead: int = 0):
-        self._publish_cmd(stair, block, spearhead, self.area)
+        # 保持当前坐标和指令不变
+        self._publish_cmd(stair, block, spearhead, self.area,
+                          x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
+                          dt35=self._last_dt35)
 
     # ==================================================================
     # ROS 回调 (在 node 的订阅中调用)

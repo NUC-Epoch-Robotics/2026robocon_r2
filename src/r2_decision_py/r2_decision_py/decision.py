@@ -199,7 +199,8 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
       7. 收尾: spearhead=0
     """
     state.area = 1
-    act.publish_cmd(0, 0, 0, 1)
+    # 发 area=1，保持当前坐标和指令
+    act.publish_cmd(area=1)
     log.info("Zone1: area=1 sent, waiting for free=2")
     await act.wait_up_free()
     log.info("Zone1: free=2 received, starting navigation")
@@ -224,7 +225,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
 
         # ── 抓矛头: 0→1→等完成 ──
         log.info("Zone1: spearhead=0")
-        act._publish_cmd(spearhead=0, area=1)
+        act.publish_cmd_with_area(spearhead=0)
         await fsm.wait(0.5)
 
         log.info("Zone1: spearhead=1 (grab)")
@@ -253,7 +254,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
         # ── 收尾: spearhead=0 ──
         log.info("Zone1: spearhead=0 (finish)")
         act.set_hold_cmd(0)
-        act.publish_cmd_with_area(0, 0, 0)
+        act.publish_cmd_with_area(spearhead=0)
         await fsm.wait(1.0)
 
         log.info("Zone1: point %d done", pt.id)
@@ -298,7 +299,7 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
 
         # ── 发 is_finsh + 开始持续前进 (+X) ──
         #  第一个点直接发; 后续点: 等上一个 status=2 → 发0 → 再发 is_finsh
-        act.publish_cmd(0, gp.is_finsh, 0, 2)
+        act.publish_cmd(block=gp.is_finsh, area=2)
         act.publish_cmd_vel(cfg.grab_forward_speed, 0.0)
         log.info("EntryGrab: 块%d is_finsh=%d sent, moving forward vx=%.3f",
                  i, gp.is_finsh, cfg.grab_forward_speed)
@@ -322,7 +323,7 @@ async def entry_grab(fsm: FSM, act, cfg: Config, state: State):
 
         # ── 下一个点需要先发 0 再发 is_finsh, 在循环开头处理 ──
         if i + 1 < len(cfg.grab_points):
-            act.publish_cmd(0, 0, 0, 2)
+            act.publish_cmd(area=2)
             log.info("EntryGrab: sent is_finsh=0 before next point")
 
     # ── 回到台阶起始点 ──
