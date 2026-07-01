@@ -85,12 +85,14 @@ class ActionDispatcher:
 
         # ── 导航等待 ──
         self.waiting_nav_done = False
+        self.waiting_nav_busy = False
         self._last_nav_x = 0.0
         self._last_nav_y = 0.0
         self._last_nav_yaw = 0.0
 
         # ── 上肢动作等待 ──
         self.waiting_arm_done = False
+        self.waiting_arm_busy = False
 
         # ── 当前指令状态（保持不变） ──
         self._last_spearhead = 0
@@ -145,7 +147,7 @@ class ActionDispatcher:
     def send_navigate(self, x: float, y: float, z: float = 0.0,
                       qx: float = 0.0, qy: float = 0.0, qz: float = 0.0, qw: float = 1.0,
                       nav_frame_id: str = 'odom'):
-        """发送导航目标到 /command topic. 等待 down_free=2 后 post NAV_DONE."""
+        """发送导航目标到 /command topic. 等待 down_free=1→2 后 post NAV_DONE."""
         import math
         yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
         log.info("NAV to (%.2f, %.2f) yaw=%.3f (via /command)", x, y, yaw)
@@ -162,6 +164,10 @@ class ActionDispatcher:
                           stair=self._last_stair,
                           dt35=self._last_dt35)
 
+        # 先等 down_free=1（忙），再等 down_free=2（空闲）
+        self.waiting_nav_busy = True
+        self.waiting_nav_done = False
+
         # 标记等待底盘完成
         self.waiting_nav_done = True
         self.down_free = False
@@ -173,7 +179,7 @@ class ActionDispatcher:
     async def send_arm_command(self, cmd: int):
         """
         发送机械臂指令 (block 字段).
-        完成后 post ARM_DONE (等 up_free=2).
+        完成后 post ARM_DONE (等 up_free=1→2).
         """
         await self.wait_up_free()
         # 保持当前坐标和其他指令不变
@@ -181,9 +187,10 @@ class ActionDispatcher:
                           x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
                           spearhead=self._last_spearhead, stair=self._last_stair,
                           dt35=self._last_dt35)
-        self.up_free = False
-        self.waiting_arm_done = True
-        log.info("ARM cmd=%d sent, waiting up_free=2", cmd)
+        # 先等 up_free=1（忙），再等 up_free=2（空闲）
+        self.waiting_arm_busy = True
+        self.waiting_arm_done = False
+        log.info("ARM cmd=%d sent, waiting up_free=1 then 2", cmd)
 
     # ==================================================================
     # 矛头指令 (spearhead 字段)
@@ -192,7 +199,7 @@ class ActionDispatcher:
     async def send_spearhead_command(self, cmd: int):
         """
         发送矛头指令 (spearhead 字段).
-        完成后 post ARM_DONE (等 up_free=2).
+        完成后 post ARM_DONE (等 up_free=1→2).
         """
         await self.wait_up_free()
         # 保持当前坐标和其他指令不变
@@ -200,9 +207,10 @@ class ActionDispatcher:
                           x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
                           block=self._last_block, stair=self._last_stair,
                           dt35=self._last_dt35)
-        self.up_free =False
-        self.waiting_arm_done = True
-        log.info("SPEARHEAD cmd=%d sent, waiting up_free=2", cmd)
+        # 先等 up_free=1（忙），再等 up_free=2（空闲）
+        self.waiting_arm_busy = True
+        self.waiting_arm_done = False
+        log.info("SPEARHEAD cmd=%d sent, waiting up_free=1 then 2", cmd)
 
     def set_hold_cmd(self, cmd: int):
         """等待期间心跳维持这个命令."""
@@ -218,7 +226,7 @@ class ActionDispatcher:
 
     async def start_stair(self, cmd: int):
         """
-        发台阶指令, 等 up_free=2 后完成.
+        发台阶指令, 等 up_free=1→2 后完成.
         cmd=1 上台阶, cmd=2 下台阶.
         """
         await self.wait_up_free()
@@ -227,8 +235,9 @@ class ActionDispatcher:
                           x=self._last_nav_x, y=self._last_nav_y, yaw=self._last_nav_yaw,
                           spearhead=self._last_spearhead, block=self._last_block,
                           dt35=self._last_dt35)
-        self.up_free = False
-        self.waiting_arm_done = True
+        # 先等 up_free=1（忙），再等 up_free=2（空闲）
+        self.waiting_arm_busy = True
+        self.waiting_arm_done = False
         self.stair_active = True
         self.pending_stair_cmd = cmd
         log.info("STAIR cmd=%d sent, waiting up_free=2", cmd)
@@ -353,11 +362,16 @@ class ActionDispatcher:
             if self.up_free:
                 log.info("UP_FREE=1: upper limb busy")
             self.up_free = False
+            # 收到忙信号，标记已收到
+            if self.waiting_arm_busy:
+                self.waiting_arm_busy = False
+                self.waiting_arm_done = True
+                log.info("ARM busy confirmed (up_free=1)")
         elif msg.up_free == 2:
             if not self.up_free:
                 log.info("UP_FREE=2: upper limb free")
             self.up_free = True
-            # 上肢动作完成
+            # 上肢动作完成（必须先收到 up_free=1，再收到 up_free=2）
             if self.waiting_arm_done:
                 self.waiting_arm_done = False
                 log.info("ARM done (up_free=2)")
@@ -369,11 +383,16 @@ class ActionDispatcher:
             if self.down_free:
                 log.info("DOWN_FREE=1: lower limb busy")
             self.down_free = False
+            # 收到忙信号，标记已收到
+            if self.waiting_nav_busy:
+                self.waiting_nav_busy = False
+                self.waiting_nav_done = True
+                log.info("NAV busy confirmed (down_free=1)")
         elif msg.down_free == 2:
             if not self.down_free:
                 log.info("DOWN_FREE=2: lower limb free")
             self.down_free = True
-            # 导航完成
+            # 导航完成（必须先收到 down_free=1，再收到 down_free=2）
             if self.waiting_nav_done:
                 self.waiting_nav_done = False
                 log.info("NAV done (down_free=2)")

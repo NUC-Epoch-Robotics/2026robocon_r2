@@ -191,15 +191,15 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
     """
     一区流程:
       1. 发 area=1
-      2. 直接走到目标点
+      2. 走到目标点
       3. DT35微调
       4. 抓矛头: spearhead=0→1→等完成
       5. 转180°
       6. 对接: spearhead=2→等完成
-      7. 收尾: spearhead=0
+      7. spearhead=4→等完成
+      8. 收尾: spearhead=0
     """
     state.area = 1
-    # 发 area=1，保持当前坐标和指令
     act.publish_cmd(area=1)
     log.info("Zone1: area=1 sent, waiting for free=2")
     await act.wait_up_free()
@@ -229,7 +229,6 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
         await fsm.wait(0.5)
 
         log.info("Zone1: spearhead=1 (grab)")
-        act.set_hold_cmd(1)
         result = await fsm.spearhead_and_wait(1)
         if not result.success:
             log.warning("Zone1: spearhead=1 failed, retry")
@@ -243,17 +242,20 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
         await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
 
         # ── 对接: spearhead=2→等完成 ──
-        docking_cmd = pt.docking_cmd if pt.docking_cmd else 2
-        log.info("Zone1: spearhead=%d (docking)", docking_cmd)
-        act.set_hold_cmd(docking_cmd)
-        await fsm.spearhead_and_wait(docking_cmd)
+        log.info("Zone1: spearhead=2 (docking)")
+        result = await fsm.spearhead_and_wait(2)
+        log.info("Zone1: spearhead=2 result=%s", result.success)
+
+        # ── spearhead=4 ──
+        log.info("Zone1: spearhead=4")
+        result = await fsm.spearhead_and_wait(4)
+        log.info("Zone1: spearhead=4 result=%s", result.success)
 
         # ── 等对接完成 ──
         await fsm.wait(5.0)
 
         # ── 收尾: spearhead=0 ──
         log.info("Zone1: spearhead=0 (finish)")
-        act.set_hold_cmd(0)
         act.publish_cmd_with_area(spearhead=0)
         await fsm.wait(1.0)
 
