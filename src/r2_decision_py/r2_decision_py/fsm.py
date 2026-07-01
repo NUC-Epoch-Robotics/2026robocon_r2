@@ -225,7 +225,7 @@ class FSM:
         DT35 一次性坐标修正.
 
         读 DT35 当前值, 算误差, 加到导航目标上, 发修正后的目标到 /command.
-        err = dt35_target - dt35_current
+        err = current - target  (值大了要往x增大的方向走)
         new_goal = nav + err
         """
         # 等待一小段时间让DT35值稳定
@@ -233,8 +233,8 @@ class FSM:
 
         # 读取DT35当前值
         dt35_x, dt35_y = get_dt35()
-        err_x = dt35_target_x - dt35_x
-        err_y = dt35_target_y - dt35_y
+        err_x = dt35_x - dt35_target_x
+        err_y = dt35_y - dt35_target_y
 
         corrected_x = nav_x + err_x
         corrected_y = nav_y + err_y

@@ -189,11 +189,14 @@ class State:
 
 async def zone1(fsm: FSM, act, cfg: Config, state: State):
     """
-    一区流程 (简化版):
+    一区流程:
       1. 发 area=1
       2. 直接走到目标点
       3. DT35微调
-      4. 等待 60s
+      4. 抓矛头: spearhead=0→1→等完成
+      5. 转180°
+      6. 对接: spearhead=2→等完成
+      7. 收尾: spearhead=0
     """
     state.area = 1
     act.publish_cmd(0, 0, 0, 1)
@@ -201,7 +204,6 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
     await act.wait_up_free()
     log.info("Zone1: free=2 received, starting navigation")
 
-    # 只走第一个目标点
     for idx, point_id in enumerate(cfg.zone1_route):
         pt = cfg.point_table.get(point_id)
         if pt is None:
@@ -220,9 +222,41 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
             lambda: (state.dt35_x, state.dt35_y),
         )
 
-        log.info("Zone1: arrived at point %d, waiting 60s...", pt.id)
-        await fsm.wait(60.0)
-        log.info("Zone1: wait done")
+        # ── 抓矛头: 0→1→等完成 ──
+        log.info("Zone1: spearhead=0")
+        act._publish_cmd(spearhead=0, area=1)
+        await fsm.wait(0.5)
+
+        log.info("Zone1: spearhead=1 (grab)")
+        act.set_hold_cmd(1)
+        result = await fsm.spearhead_and_wait(1)
+        if not result.success:
+            log.warning("Zone1: spearhead=1 failed, retry")
+            result = await fsm.spearhead_and_wait(1)
+            if not result.success:
+                log.warning("Zone1: spearhead=1 failed after retry, continue")
+
+        # ── 转 180° ──
+        state.current_yaw += math.pi
+        log.info("Zone1: rotate 180° to yaw=%.3f", state.current_yaw)
+        await fsm.rotate_to(fsm._last_nav_x, fsm._last_nav_y, state.current_yaw)
+
+        # ── 对接: spearhead=2→等完成 ──
+        docking_cmd = pt.docking_cmd if pt.docking_cmd else 2
+        log.info("Zone1: spearhead=%d (docking)", docking_cmd)
+        act.set_hold_cmd(docking_cmd)
+        await fsm.spearhead_and_wait(docking_cmd)
+
+        # ── 等对接完成 ──
+        await fsm.wait(5.0)
+
+        # ── 收尾: spearhead=0 ──
+        log.info("Zone1: spearhead=0 (finish)")
+        act.set_hold_cmd(0)
+        act.publish_cmd_with_area(0, 0, 0)
+        await fsm.wait(1.0)
+
+        log.info("Zone1: point %d done", pt.id)
 
     log.info("Zone1: FINISH")
 
