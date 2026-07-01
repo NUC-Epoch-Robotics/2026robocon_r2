@@ -139,7 +139,7 @@ class FSM:
 
     async def nav_to(self, x: float, y: float, z: float = 0.0,
                      qx: float = 0.0, qy: float = 0.0, qz: float = 0.0, qw: float = 1.0) -> Event:
-        """发送 Nav2 导航, 等待到达."""
+        """发送导航目标到 /command, 等待到达."""
         self._last_nav_x = x
         self._last_nav_y = y
         self.act.send_navigate(x, y, z, qx, qy, qz, qw)
@@ -224,7 +224,7 @@ class FSM:
         """
         DT35 一次性坐标修正.
 
-        读 DT35 当前值, 算误差, 加到导航目标上, 发修正后的目标给 Nav2.
+        读 DT35 当前值, 算误差, 加到导航目标上, 发修正后的目标到 /command.
         err = dt35_target - dt35_current
         new_goal = nav + err
         """

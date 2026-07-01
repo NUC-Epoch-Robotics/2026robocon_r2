@@ -198,7 +198,7 @@ async def zone1(fsm: FSM, act, cfg: Config, state: State):
     state.area = 1
     act.publish_cmd(0, 0, 0, 1)
     log.info("Zone1: area=1 sent, waiting for free=2")
-    await act.wait_arm_free()
+    await act.wait_up_free()
     log.info("Zone1: free=2 received, starting navigation")
 
     for idx, point_id in enumerate(cfg.zone1_route):

@@ -12,7 +12,6 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>nav2_msgs</depend>
   <depend>robot_serial</depend>
 
   <test_depend>ament_copyright</test_depend>

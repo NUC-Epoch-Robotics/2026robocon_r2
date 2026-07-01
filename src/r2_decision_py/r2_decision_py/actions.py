@@ -24,11 +24,9 @@ from typing import Callable, Optional
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
-from rclpy.action import ActionClient
 
 from std_msgs.msg import Bool, UInt8
 from geometry_msgs.msg import Twist
-from nav2_msgs.action import NavigateToPose
 from robot_serial.msg import Command, Ack
 
 from .fsm import Event
@@ -70,9 +68,6 @@ class ActionDispatcher:
         self.grab_scene_expected_pub = node.create_publisher(UInt8, 'grab_scene/expected_scene', 10)
         self.cmd_vel_pub = node.create_publisher(Twist, 'cmd_vel', 10)
 
-        # ── Nav2 action client ──
-        self.nav_client = ActionClient(node, NavigateToPose, 'navigate_to_pose')
-
         # ── 区号 ──
         self.area = 0
 
@@ -113,6 +108,9 @@ class ActionDispatcher:
         # ── 上下肢状态 (1=忙, 2=空闲) ──
         self.up_free = True
         self.down_free = True
+
+        # ── 导航等待 ──
+        self.waiting_nav_done = False
 
         # ── 定时 tick (20ms) ──
         self._tick_timer = node.create_timer(0.020, self._tick)
@@ -156,49 +154,23 @@ class ActionDispatcher:
         self._publish_cmd(stair, block, spearhead, self.area)
 
     # ==================================================================
-    # 导航
+    # 导航 (直接发 /command, 不走 Nav2)
     # ==================================================================
 
     def send_navigate(self, x: float, y: float, z: float = 0.0,
                       qx: float = 0.0, qy: float = 0.0, qz: float = 0.0, qw: float = 1.0,
                       nav_frame_id: str = 'odom'):
-        """发送 Nav2 导航目标. 完成后 post NAV_DONE."""
-        log.info("NAV to (%.2f, %.2f, %.2f) q=(%.3f, %.3f, %.3f, %.3f)",
-                 x, y, z, qx, qy, qz, qw)
+        """发送导航目标到 /command topic. 等待 down_free=2 后 post NAV_DONE."""
+        import math
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        log.info("NAV to (%.2f, %.2f) yaw=%.3f (via /command)", x, y, yaw)
 
-        if not self.nav_client.wait_for_server(timeout_sec=1.0):
-            log.warning("Nav2 action server not available")
-            self.post_event(Event("NAV_DONE", success=False))
-            return
+        # 直接发到 /command
+        self._publish_cmd(x=x, y=y, yaw=yaw)
 
-        goal = NavigateToPose.Goal()
-        goal.pose.header.frame_id = nav_frame_id
-        goal.pose.header.stamp = self.node.get_clock().now().to_msg()
-        goal.pose.pose.position.x = float(x)
-        goal.pose.pose.position.y = float(y)
-        goal.pose.pose.position.z = float(z)
-        goal.pose.pose.orientation.x = float(qx)
-        goal.pose.pose.orientation.y = float(qy)
-        goal.pose.pose.orientation.z = float(qz)
-        goal.pose.pose.orientation.w = float(qw)
-
-        future = self.nav_client.send_goal_async(goal)
-        future.add_done_callback(self._on_nav_goal_response)
-
-    def _on_nav_goal_response(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            log.warning("Nav goal REJECTED")
-            self.post_event(Event("NAV_DONE", success=False))
-            return
-        log.info("Nav goal ACCEPTED")
-        goal_handle.get_result_async().add_done_callback(self._on_nav_result)
-
-    def _on_nav_result(self, future):
-        result = future.result()
-        ok = (result.status == 4)  # SUCCEEDED
-        log.info("NAV done: %s", "OK" if ok else "FAIL")
-        self.post_event(Event("NAV_DONE", success=ok))
+        # 标记等待底盘完成
+        self.waiting_nav_done = True
+        self.down_free = False
 
     # ==================================================================
     # 机械臂指令 (block 字段)
@@ -390,6 +362,12 @@ class ActionDispatcher:
             if not self.down_free:
                 log.info("DOWN_FREE=2: lower limb free")
             self.down_free = True
+            # 导航完成
+            if self.waiting_nav_done:
+                self.waiting_nav_done = False
+                log.info("NAV done (down_free=2)")
+                self.post_event(Event("NAV_DONE", success=True))
+                return
 
         # xipan_status=1 → 吸到了, 可以开始走下一个点 (但还不能发 is_finsh)
         if msg.xipan_status == 1:
